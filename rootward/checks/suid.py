@@ -4,8 +4,7 @@ import stat
 
 from rootward.checks._common import GTFO_BINARIES, base_name, iter_files, writable_by_current_user
 from rootward.checks.base import BaseCheck
-from rootward.ethics import should_abort
-from rootward.models import Finding, Severity
+from rootward.models import Severity
 
 # SUID/SGID programs shipped by mainstream distributions. These are expected and not reported.
 STANDARD_BINARIES = frozenset({
@@ -32,7 +31,7 @@ class SuidCheck(BaseCheck):
     def run(self) -> list:
         findings = []
         for path, st in iter_files(self.roots):
-            if should_abort():
+            if self.aborted():
                 break
             if not st.st_mode & 0o111:
                 continue  # SUID/SGID bit on a non-executable file is not usable
@@ -67,16 +66,13 @@ class SuidCheck(BaseCheck):
             return None
 
         kind = "SUID" if is_suid else "SGID"
-        return Finding(
-            check_id=self.check_id,
-            title=f"{kind} binary: {path}",
-            severity=severity,
-            description=f"{path} runs with the privileges of its owner/group because {reason}.",
-            remediation=(f"If it is not required: chmod u-s,g-s {path}. Confirm it belongs to an "
-                         "installed package (dpkg -S / rpm -qf) and remove it if it does not."),
-            evidence=f"{stat.filemode(mode)} uid={st.st_uid} gid={st.st_gid} {path}",
-            tags=tags,
-        )
+        return self.finding(
+            f"{kind} binary: {path}", path, severity,
+            f"{path} runs with the privileges of its owner/group because {reason}. "
+            f"Evidence: {stat.filemode(mode)} uid={st.st_uid} gid={st.st_gid}.",
+            f"If it is not required: chmod u-s,g-s {path}. Confirm it belongs to an "
+            "installed package (dpkg -S / rpm -qf) and remove it if it does not.",
+            tags)
 
 
 if __name__ == "__main__":

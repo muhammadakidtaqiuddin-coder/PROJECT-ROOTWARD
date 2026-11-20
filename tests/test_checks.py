@@ -44,7 +44,9 @@ class SuidTests(Tmp):
     def test_standard_binary_ignored_and_plain_file_ignored(self):
         self.make("passwd", 0o4555)  # read-only, so not user-writable
         self.make("plain", 0o755)
-        self.assertEqual(SuidCheck(roots=[self.tmp]).run(), [])
+        # the temp dir lives under /tmp, which would trigger the user-writable-location rule
+        with mock.patch("rootward.checks.suid.USER_WRITABLE_PREFIXES", ()):
+            self.assertEqual(SuidCheck(roots=[self.tmp]).run(), [])
 
 
 class WalkTests(Tmp):
@@ -74,7 +76,7 @@ User obey may run the following commands on host:
         self.assertEqual(sev("sudo rule: /usr/bin/vim"), [Severity.CRITICAL])
         self.assertEqual(sev("sudo rule: /usr/bin/ls"), [Severity.LOW])
         # "ALL" appears twice: with password (LOW) and NOPASSWD (CRITICAL)
-        self.assertEqual(sorted(s.value for s in sev("sudo rule: ALL")), ["CRITICAL", "LOW"])
+        self.assertEqual(sorted(s.name for s in sev("sudo rule: ALL")), ["CRITICAL", "LOW"])
         rsync = [f for f in found if f.title == "sudo rule: /usr/bin/rsync *"][0]
         self.assertEqual(rsync.severity, Severity.CRITICAL)
         self.assertIn("sudo-wildcard", rsync.tags)
@@ -125,7 +127,7 @@ class CapabilityTests(Tmp):
             found = CapabilitiesCheck(roots=[self.tmp]).run()
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].severity, Severity.CRITICAL)
-        self.assertEqual(found[0].tags, ["capability"])
+        self.assertEqual(found[0].tags, {"capability"})
 
     def test_harmless_cap_ignored(self):
         self.make("ping", 0o755)

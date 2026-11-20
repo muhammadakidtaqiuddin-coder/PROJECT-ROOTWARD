@@ -6,7 +6,6 @@ import stat
 
 from rootward.checks._common import can_replace, writable_by_current_user
 from rootward.checks.base import BaseCheck
-from rootward.ethics import should_abort
 from rootward.models import Finding, Severity
 
 SYSTEM_CRONTABS = ["/etc/crontab"] + sorted(glob.glob("/etc/cron.d/*"))
@@ -90,11 +89,11 @@ class CronCheck(BaseCheck):
     def run(self) -> list:
         findings = []
         for path, system, owner in self.crontabs:
-            if should_abort():
+            if self.aborted():
                 return findings
             findings += self._audit_crontab(path, system, owner)
         for directory in self.script_dirs:
-            if should_abort():
+            if self.aborted():
                 return findings
             findings += self._audit_script_dir(directory)
         return findings
@@ -112,7 +111,7 @@ class CronCheck(BaseCheck):
         except OSError:
             return findings
         for line in lines:
-            if should_abort():
+            if self.aborted():
                 break
             parsed = parse_cron_line(line, system)
             if parsed:
@@ -131,14 +130,15 @@ class CronCheck(BaseCheck):
                 continue
             severity = Severity.CRITICAL if as_root else Severity.HIGH
             findings.append(self._finding(
-                f"Writable cron script run as {user}: {target}", severity, f"{source}: {command}",
+                f"Writable cron script run as {user}: {target}", severity, target,
                 ["cron", *(["root-owned"] if as_root else []), "script-writable", *tags],
-                f"{target} is executed by cron as {user} but can be modified by an unprivileged user."))
+                f"{target} is executed by cron as {user} but can be modified by an unprivileged user.",
+                f"{source}: {command}"))
         if any(tool in command.split() for tool in _WILDCARD_TOOLS) and "*" in command:
             findings.append(self._finding(
-                f"Wildcard in cron command run as {user}", Severity.MEDIUM, f"{source}: {command}",
+                f"Wildcard in cron command run as {user}", Severity.MEDIUM, source,
                 ["cron"], "A wildcard passed to tar/rsync/chown/chmod can be abused with crafted "
-                          "file names (wildcard injection)."))
+                          "file names (wildcard injection).", f"{source}: {command}"))
         return findings
 
     def _audit_script_dir(self, directory: str) -> list:
@@ -146,7 +146,7 @@ class CronCheck(BaseCheck):
             return []
         findings = []
         for name in sorted(os.listdir(directory)):
-            if should_abort():
+            if self.aborted():
                 break
             path = os.path.join(directory, name)
             tags = _writable_tags(path)
@@ -159,10 +159,11 @@ class CronCheck(BaseCheck):
                     "Scripts in this directory are run by cron as root but can be modified."))
         return findings
 
-    def _finding(self, title, severity, evidence, tags, description) -> Finding:
-        return Finding(self.check_id, title, severity, description,
-                       "Make cron files and scripts owned by root with mode 644/755, and make "
-                       "their directories non-writable for other users.", evidence, tags)
+    def _finding(self, title, severity, path, tags, description, evidence="") -> Finding:
+        return self.finding(title, path, severity,
+                            f"{description} Evidence: {evidence}." if evidence else description,
+                            "Make cron files and scripts owned by root with mode 644/755, and make "
+                            "their directories non-writable for other users.", tags)
 
 
 if __name__ == "__main__":

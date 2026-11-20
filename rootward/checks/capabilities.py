@@ -4,8 +4,7 @@ import stat
 
 from rootward.checks._common import iter_files
 from rootward.checks.base import BaseCheck
-from rootward.ethics import should_abort
-from rootward.models import Finding, Severity
+from rootward.models import Severity
 
 CAP_NAMES = (
     "chown", "dac_override", "dac_read_search", "fowner", "fsetid", "kill", "setgid", "setuid",
@@ -46,7 +45,7 @@ class CapabilitiesCheck(BaseCheck):
             return []  # not Linux
         findings = []
         for path, st in iter_files(self.roots):
-            if should_abort():
+            if self.aborted():
                 break
             if not st.st_mode & 0o111:
                 continue
@@ -67,17 +66,14 @@ class CapabilitiesCheck(BaseCheck):
             return None
         flags = "+ep" if effective else "+p"
         listing = ",".join(f"cap_{n}" for n in names)
-        return Finding(
-            check_id=self.check_id,
-            title=f"Dangerous capability on {path}",
-            severity=Severity.CRITICAL if critical else Severity.HIGH,
-            description=(f"{path} holds {', '.join('cap_' + n for n in critical + high)}. "
-                         "Programs with these capabilities can often be used to become root "
-                         "without being SUID."),
-            remediation=f"Remove it if not needed: setcap -r {path}",
-            evidence=f"{path} = {listing}{flags} ({stat.filemode(st.st_mode)})",
-            tags=["capability"],
-        )
+        return self.finding(
+            f"Dangerous capability on {path}", path,
+            Severity.CRITICAL if critical else Severity.HIGH,
+            f"{path} holds {', '.join('cap_' + n for n in critical + high)}. "
+            "Programs with these capabilities can often be used to become root "
+            f"without being SUID. Evidence: {listing}{flags} ({stat.filemode(st.st_mode)}).",
+            f"Remove it if not needed: setcap -r {path}",
+            ["capability"])
 
 
 if __name__ == "__main__":

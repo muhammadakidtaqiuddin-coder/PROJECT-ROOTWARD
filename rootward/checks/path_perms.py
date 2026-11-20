@@ -4,8 +4,7 @@ import stat
 
 from rootward.checks._common import writable_by_current_user
 from rootward.checks.base import BaseCheck
-from rootward.ethics import should_abort
-from rootward.models import Finding, Severity
+from rootward.models import Severity
 
 SYSTEM_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
 
@@ -24,7 +23,7 @@ class PathPermsCheck(BaseCheck):
         first_system = next((i for i, e in enumerate(entries) if e in SYSTEM_DIRS), len(entries))
         seen = set()
         for index, entry in enumerate(entries):
-            if should_abort():
+            if self.aborted():
                 break
             if entry in seen:
                 continue
@@ -68,12 +67,13 @@ class PathPermsCheck(BaseCheck):
             f"Writable PATH directory: {entry}", severity, f"PATH[{index}] = {entry} "
             f"({stat.filemode(st.st_mode)})", ["path-writable", *tags],
             f"{entry} is writable and listed {position}. A planted program with a common "
-            "command name can be run by a privileged user whose PATH includes it.")
+            "command name can be run by a privileged user whose PATH includes it.", path=entry)
 
-    def _finding(self, title, severity, evidence, tags, description) -> Finding:
-        return Finding(self.check_id, title, severity, description,
-                       "Remove the entry from PATH, or chmod go-w it and make it root-owned. "
-                       "Never put '.' or an empty entry in PATH.", evidence, tags)
+    def _finding(self, title, severity, evidence, tags, description, path=None):
+        return self.finding(title, path or evidence, severity,
+                            f"{description} Evidence: {evidence}.",
+                            "Remove the entry from PATH, or chmod go-w it and make it root-owned. "
+                            "Never put '.' or an empty entry in PATH.", tags)
 
 
 if __name__ == "__main__":

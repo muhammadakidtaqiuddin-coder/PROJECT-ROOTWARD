@@ -14,9 +14,14 @@ _OPTION_RE = re.compile(r"^([A-Z_]+):\s*")
 _DANGEROUS_ENV_RE = re.compile(r"env_keep\s*\+?=.*\b(LD_PRELOAD|LD_LIBRARY_PATH)\b")
 
 
+def _make(title, path, severity, explanation, remediation, tags=None) -> Finding:
+    return Finding(check_id="sudo_rules", title=title, path=path, severity=severity,
+                   explanation=explanation, remediation=remediation, tags=set(tags or []))
+
+
 def _info(title: str, description: str) -> Finding:
-    return Finding("sudo_rules", title, Severity.INFO, description,
-                   "Run RootWard from the account you want to audit, in an interactive session.")
+    return _make(title, "sudo", Severity.INFO, description,
+                 "Run RootWard from the account you want to audit, in an interactive session.")
 
 
 def _assess_rule(runas: str, options: set, command: str) -> Finding:
@@ -36,17 +41,16 @@ def _assess_rule(runas: str, options: set, command: str) -> Finding:
             severity = bump(severity, 1)
 
     password = "without a password" if nopasswd else "with a password"
-    return Finding(
-        check_id="sudo_rules",
-        title=f"sudo rule: {command}",
-        severity=severity,
-        description=(f"The current user may run {command} as ({runas}) {password}. "
-                     "Shell-escape binaries and wildcard arguments can turn this into a root shell."),
-        remediation=("Remove NOPASSWD where possible, avoid wildcards, and do not allow editors, "
-                     "interpreters or file tools through sudo (use sudoedit). Edit with visudo."),
-        evidence=f"({runas}) {'NOPASSWD: ' if nopasswd else ''}{command}",
-        tags=tags,
-    )
+    # path = the program sudo runs, so scoring can chain it with a writable file
+    path = command.split()[0] if command != "ALL" else "ALL"
+    return _make(
+        f"sudo rule: {command}", path, severity,
+        f"The current user may run {command} as ({runas}) {password}. "
+        "Shell-escape binaries and wildcard arguments can turn this into a root shell. "
+        f"Evidence: ({runas}) {'NOPASSWD: ' if nopasswd else ''}{command}.",
+        "Remove NOPASSWD where possible, avoid wildcards, and do not allow editors, "
+        "interpreters or file tools through sudo (use sudoedit). Edit with visudo.",
+        tags)
 
 
 def parse_sudo_output(text: str) -> list:
@@ -56,12 +60,12 @@ def parse_sudo_output(text: str) -> list:
         if should_abort():
             break
         if _DANGEROUS_ENV_RE.search(line) or "!env_reset" in line:
-            findings.append(Finding(
-                "sudo_rules", "sudo keeps dangerous environment variables", Severity.HIGH,
+            findings.append(_make(
+                "sudo keeps dangerous environment variables", "/etc/sudoers", Severity.HIGH,
                 "env_keep exposes LD_PRELOAD/LD_LIBRARY_PATH (or env_reset is disabled), "
-                "which lets a user load their own library into a sudo command.",
+                f"which lets a user load their own library into a sudo command. Evidence: {line.strip()}.",
                 "Remove LD_PRELOAD and LD_LIBRARY_PATH from env_keep and keep env_reset enabled.",
-                line.strip(), ["sudo-env-keep"]))
+                ["sudo-env-keep"]))
         match = _RULE_RE.match(line)
         if not match:
             continue
