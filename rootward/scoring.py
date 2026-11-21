@@ -16,7 +16,7 @@ from rootward.models import Finding, Severity
 
 KNOWN_TAGS = {
     "suid", "sgid", "root-owned", "world-writable", "writable-by-user",
-    "cron", "script-writable", "sudo-nopasswd", "sudo-wildcard",
+    "cron", "script-writable", "sudo-nopasswd", "sudo-wildcard", "sudo-env-keep",
     "capability", "path-writable",
 }
 
