@@ -13,7 +13,8 @@ from rootward.checks.capabilities import CapabilitiesCheck
 from rootward.checks.cron import CronCheck, _uid_of
 from rootward.checks.path_perms import PathPermsCheck
 from rootward.checks.sudo_rules import parse_sudo_output
-from rootward.models import Severity
+from rootward.models import Finding, Severity
+from rootward.scoring import apply_scoring
 
 
 class Tmp(unittest.TestCase):
@@ -243,21 +244,84 @@ class CronOwnerTests(Tmp):
 
 
 class PathGroupTests(unittest.TestCase):
-    """Review point B: Debian/Kali ship /usr/local/bin as root:staff 2775."""
+    """Review points B and the third review: Debian/Kali ship /usr/local/bin as root:staff 2775."""
 
-    def test_standard_system_dir_writable_only_by_a_group_is_medium_and_untagged(self):
-        with patch_stat({"/usr/local/bin": dir_stat(0o2775, uid=0, gid=50)}):
-            found = PathPermsCheck(path_value="/usr/local/bin:/usr/bin").run()
+    def check(self, path_value, stats, group="staff"):
+        with patch_stat(stats), mock.patch("rootward.checks.path_perms._group_name",
+                                           return_value=group):
+            return PathPermsCheck(path_value=path_value).run()
+
+    def test_debian_default_group_writable_dir_is_medium_with_no_tags(self):
+        found = self.check("/usr/local/bin:/usr/bin", {"/usr/local/bin": dir_stat(0o2775, 0, 50)})
         self.assertEqual(len(found), 1)
         self.assertEqual(found[0].severity, Severity.MEDIUM)
-        self.assertEqual(found[0].tags, {"path-writable"})  # no writable-by-user: no chain
+        self.assertEqual(found[0].tags, set())  # scoring treats even "path-writable" as writable
+
+    def test_exemption_covers_usr_local_sbin_and_a_trailing_slash(self):
+        for entry in ("/usr/local/sbin", "/usr/local/bin/"):
+            with self.subTest(entry=entry):
+                found = self.check(f"{entry}:/usr/bin", {entry: dir_stat(0o2775, 0, 50)})
+                self.assertEqual([f.severity for f in found], [Severity.MEDIUM])
+                self.assertEqual(found[0].path, entry.rstrip("/"))
+
+    def test_other_system_directories_are_not_exempt(self):
+        for entry in ("/usr/bin", "/usr/sbin", "/bin"):
+            with self.subTest(entry=entry):
+                found = self.check(f"{entry}:/usr/local/bin", {entry: dir_stat(0o2775, 0, 50)})
+                self.assertEqual(len(found), 1)
+                self.assertGreaterEqual(found[0].severity, Severity.HIGH)
+                self.assertIn("writable-by-user", found[0].tags)
+
+    def test_usr_local_bin_writable_by_another_group_is_not_exempt(self):
+        found = self.check("/usr/local/bin:/usr/bin", {"/usr/local/bin": dir_stat(0o2775, 0, 100)},
+                           group="users")
+        self.assertGreaterEqual(found[0].severity, Severity.HIGH)
+        self.assertIn("writable-by-user", found[0].tags)
+
+    def test_usr_local_bin_writable_by_everyone_is_not_exempt(self):
+        found = self.check("/usr/local/bin:/usr/bin", {"/usr/local/bin": dir_stat(0o777, 0, 50)})
+        self.assertGreaterEqual(found[0].severity, Severity.HIGH)
+        self.assertIn("world-writable", found[0].tags)
 
     def test_other_group_writable_directory_is_still_flagged(self):
-        with patch_stat({"/opt/shared": dir_stat(0o2775, uid=0, gid=100)}):
-            found = PathPermsCheck(path_value="/opt/shared:/usr/bin").run()
+        found = self.check("/opt/shared:/usr/bin", {"/opt/shared": dir_stat(0o2775, 0, 100)},
+                           group="devs")
         self.assertEqual(len(found), 1)
         self.assertGreaterEqual(found[0].severity, Severity.HIGH)
         self.assertIn("writable-by-user", found[0].tags)
+
+    def test_trailing_slash_does_not_hide_a_system_directory_from_the_before_system_rule(self):
+        found = self.check("/opt/bin:/usr/bin/", {"/opt/bin": dir_stat(0o777, 0, 0)})
+        self.assertEqual(found[0].severity, Severity.CRITICAL)  # listed before the system dirs
+
+
+class PathScoringTests(unittest.TestCase):
+    """End to end with scoring.py: the exempt finding must not chain to CRITICAL."""
+
+    @staticmethod
+    def suid_in(directory):
+        return Finding(check_id="suid", title=f"SUID binary: {directory}/tool", path=f"{directory}/tool",
+                       severity=Severity.MEDIUM, explanation="not a standard SUID program",
+                       remediation="remove it", tags={"suid", "root-owned"})
+
+    def path_finding(self, path_value, entry, stat_result, group="staff"):
+        with patch_stat({entry: stat_result}), mock.patch(
+                "rootward.checks.path_perms._group_name", return_value=group):
+            return PathPermsCheck(path_value=path_value).run()[0]
+
+    def test_group_only_system_dir_and_a_suid_binary_inside_it_stay_medium(self):
+        path = self.path_finding("/usr/local/bin:/usr/bin", "/usr/local/bin", dir_stat(0o2775, 0, 50))
+        suid = self.suid_in("/usr/local/bin")
+        apply_scoring([path, suid])
+        self.assertEqual(path.severity, Severity.MEDIUM)
+        self.assertEqual(suid.severity, Severity.MEDIUM)
+
+    def test_world_writable_dir_still_chains_with_a_suid_binary_inside_it(self):
+        path = self.path_finding("/opt/bin:/usr/bin", "/opt/bin", dir_stat(0o777, 0, 0))
+        suid = self.suid_in("/opt/bin")
+        apply_scoring([path, suid])
+        self.assertEqual(path.severity, Severity.CRITICAL)
+        self.assertEqual(suid.severity, Severity.CRITICAL)
 
 
 class SudoReviewTests(unittest.TestCase):
