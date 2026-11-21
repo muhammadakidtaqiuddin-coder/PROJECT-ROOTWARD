@@ -2,7 +2,7 @@
 import os
 import stat
 
-from rootward.checks._common import GTFO_BINARIES, base_name, iter_files, writable_by_current_user
+from rootward.checks._common import GTFO_BINARIES, base_name, iter_files, writable_tags
 from rootward.checks.base import BaseCheck
 from rootward.models import Severity
 
@@ -48,10 +48,7 @@ class SuidCheck(BaseCheck):
         tags = ["suid" if is_suid else "sgid"]
         if st.st_uid == 0:
             tags.append("root-owned")
-        if mode & stat.S_IWOTH:
-            tags.append("world-writable")
-        if writable_by_current_user(path):
-            tags.append("writable-by-user")
+        tags += writable_tags(path)
 
         if "world-writable" in tags or "writable-by-user" in tags:
             severity, reason = Severity.CRITICAL, "the file can be replaced by an unprivileged user"

@@ -26,9 +26,14 @@ GTFO_BINARIES = frozenset({
 _SEVERITY_ORDER = (Severity.INFO, Severity.LOW, Severity.MEDIUM, Severity.HIGH, Severity.CRITICAL)
 
 
+_VARIANT_SUFFIX_RE = re.compile(r"\.(basic|tiny|nox|gtk\d*|gnome|athena|traditional|original|openbsd)$")
+
+
 def base_name(path: str) -> str:
-    """'/usr/bin/python3.11' -> 'python' (strips directory and trailing version digits)."""
-    return re.sub(r"[\d.]+$", "", os.path.basename(path))
+    """'/usr/bin/python3.11' -> 'python', '/usr/bin/vim.basic' -> 'vim'
+    (strips the directory, Debian alternative suffixes such as .basic/.tiny, and version digits)."""
+    name = _VARIANT_SUFFIX_RE.sub("", os.path.basename(path))
+    return re.sub(r"[\d.]+$", "", name)
 
 
 def bump(severity: Severity, steps: int = 1) -> Severity:
@@ -38,20 +43,47 @@ def bump(severity: Severity, steps: int = 1) -> Severity:
 
 
 def writable_by_current_user(path: str) -> bool:
-    """True if the user running the scan can write `path`. Always False for root,
-    because root can write everything and that is not a privilege-escalation path."""
-    return os.geteuid() != 0 and os.access(path, os.W_OK)
+    """True if an ordinary (non-root) user could write `path`.
+
+    Decided only from the permission bits, so the answer does not depend on who runs the scan
+    (a scan as root reports the same as a scan as a normal user). Writable means: writable by
+    everyone, writable by a group that is not root, or writable by an owner that is not root.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if st.st_mode & stat.S_IWOTH:
+        return True
+    if st.st_mode & stat.S_IWGRP and st.st_gid != 0:
+        return True
+    return bool(st.st_mode & stat.S_IWUSR and st.st_uid != 0)
+
+
+def writable_tags(path: str) -> list:
+    """Tags for the ways an ordinary user can write `path`: 'world-writable' (other-write
+    bit) and/or 'writable-by-user' (see writable_by_current_user). Empty if not writable."""
+    tags = []
+    try:
+        if os.stat(path).st_mode & stat.S_IWOTH:
+            tags.append("world-writable")
+    except OSError:
+        return tags
+    if writable_by_current_user(path):
+        tags.append("writable-by-user")
+    return tags
 
 
 def can_replace(path: str) -> bool:
-    """True if the current user could swap `path` by writing to its parent directory.
-    A sticky parent (like /tmp) only allows this when the user owns the file."""
+    """True if an ordinary user could swap `path` by writing to its parent directory.
+    A sticky parent (like /tmp) only allows this for the file's owner, so a file owned by
+    a non-root account counts (that account can replace it) and a root-owned one does not."""
     parent = os.path.dirname(path) or "/"
     try:
         if not writable_by_current_user(parent):
             return False
         if os.stat(parent).st_mode & stat.S_ISVTX:
-            return os.stat(path).st_uid == os.geteuid()
+            return os.stat(path).st_uid != 0
     except FileNotFoundError:
         return True  # file missing but the directory is writable: it can be created
     except OSError:
