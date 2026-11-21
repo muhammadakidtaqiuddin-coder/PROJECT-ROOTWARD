@@ -22,7 +22,7 @@ KNOWN_TAGS = {
 
 WRITABLE_TAGS = {"world-writable", "writable-by-user",
                  "script-writable", "path-writable"}
-PRIVILEGED_EXEC_TAGS = {"suid", "cron", "sudo-nopasswd"}
+PRIVILEGED_EXEC_TAGS = {"suid", "cron", "sudo-nopasswd", "capability"}
 
 WEIGHTS = {
     Severity.INFO: 0, Severity.LOW: 5, Severity.MEDIUM: 15,
