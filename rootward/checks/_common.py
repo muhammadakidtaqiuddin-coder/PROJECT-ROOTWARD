@@ -42,48 +42,57 @@ def bump(severity: Severity, steps: int = 1) -> Severity:
     return _SEVERITY_ORDER[index]
 
 
-def writable_by_current_user(path: str) -> bool:
-    """True if an ordinary (non-root) user could write `path`.
-
-    Decided only from the permission bits, so the answer does not depend on who runs the scan
-    (a scan as root reports the same as a scan as a normal user). Writable means: writable by
-    everyone, writable by a group that is not root, or writable by an owner that is not root.
+def write_sources(path: str, run_as_uid=None) -> set:
+    """Which kinds of non-root user can write `path`, decided only from its permission bits so
+    the answer does not depend on who runs the scan:
+      'world': the other-write bit is set;
+      'group': the group-write bit is set and the group is not root;
+      'owner': the owner-write bit is set, the owner is not root, and the owner is not
+               `run_as_uid` (the account that runs the file: editing your own file, such as
+               your own crontab, is not an escalation).
     """
     try:
         st = os.stat(path)
     except OSError:
-        return False
+        return set()
+    sources = set()
     if st.st_mode & stat.S_IWOTH:
-        return True
+        sources.add("world")
     if st.st_mode & stat.S_IWGRP and st.st_gid != 0:
-        return True
-    return bool(st.st_mode & stat.S_IWUSR and st.st_uid != 0)
+        sources.add("group")
+    if st.st_mode & stat.S_IWUSR and st.st_uid not in (0, run_as_uid):
+        sources.add("owner")
+    return sources
 
 
-def writable_tags(path: str) -> list:
+def writable_by_current_user(path: str, run_as_uid=None) -> bool:
+    """True if an ordinary (non-root) user could write `path` (see write_sources)."""
+    return bool(write_sources(path, run_as_uid))
+
+
+def writable_tags(path: str, run_as_uid=None) -> list:
     """Tags for the ways an ordinary user can write `path`: 'world-writable' (other-write
-    bit) and/or 'writable-by-user' (see writable_by_current_user). Empty if not writable."""
+    bit) and/or 'writable-by-user' (any write source). Empty if not writable."""
+    sources = write_sources(path, run_as_uid)
     tags = []
-    try:
-        if os.stat(path).st_mode & stat.S_IWOTH:
-            tags.append("world-writable")
-    except OSError:
-        return tags
-    if writable_by_current_user(path):
+    if "world" in sources:
+        tags.append("world-writable")
+    if sources:
         tags.append("writable-by-user")
     return tags
 
 
-def can_replace(path: str) -> bool:
+def can_replace(path: str, run_as_uid=None) -> bool:
     """True if an ordinary user could swap `path` by writing to its parent directory.
     A sticky parent (like /tmp) only allows this for the file's owner, so a file owned by
-    a non-root account counts (that account can replace it) and a root-owned one does not."""
+    a non-root account counts (that account can replace it) and a root-owned one does not.
+    `run_as_uid` is the account that runs the file: its own files and directories are ignored."""
     parent = os.path.dirname(path) or "/"
     try:
-        if not writable_by_current_user(parent):
+        if not writable_by_current_user(parent, run_as_uid):
             return False
         if os.stat(parent).st_mode & stat.S_ISVTX:
-            return os.stat(path).st_uid != 0
+            return os.stat(path).st_uid not in (0, run_as_uid)
     except FileNotFoundError:
         return True  # file missing but the directory is writable: it can be created
     except OSError:
@@ -91,18 +100,35 @@ def can_replace(path: str) -> bool:
     return True
 
 
-def iter_files(roots=None) -> Iterator[tuple]:
+def _same_device(path: str, device: int) -> bool:
+    try:
+        return os.lstat(path).st_dev == device
+    except OSError:
+        return False
+
+
+def iter_files(roots=None, cross_mounts: bool = False) -> Iterator[tuple]:
     """Yield (path, lstat_result) for every regular file under `roots`.
-    Read-only; never follows symlinks; stops early when the kill switch fires."""
+    Read-only; never follows symlinks; stops early when the kill switch fires.
+    Unless `cross_mounts` is set, a directory on another filesystem than its root (a Docker
+    overlay, an NFS share, a mounted disk) is not entered; each root is still scanned."""
     reals = {os.path.realpath(r) for r in (roots or DEFAULT_ROOTS)}
     # drop missing roots and roots nested inside another root (e.g. /sbin -> /usr/sbin)
     top_level = sorted(r for r in reals if os.path.isdir(r)
                        and not any(r != o and r.startswith(o.rstrip("/") + "/") for o in reals))
     for real in top_level:
+        try:
+            root_device = os.lstat(real).st_dev
+        except OSError:
+            continue
         for dirpath, dirnames, filenames in os.walk(real, followlinks=False):
             if should_abort():
                 return
-            dirnames[:] = [d for d in dirnames if os.path.join(dirpath, d) not in SKIP_DIRS]
+            dirnames[:] = [
+                d for d in dirnames
+                if os.path.join(dirpath, d) not in SKIP_DIRS
+                and (cross_mounts or _same_device(os.path.join(dirpath, d), root_device))
+            ]
             for name in filenames:
                 path = os.path.join(dirpath, name)
                 try:
