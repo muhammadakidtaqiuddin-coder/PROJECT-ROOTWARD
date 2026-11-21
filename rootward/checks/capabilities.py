@@ -2,7 +2,7 @@
 import os
 import stat
 
-from rootward.checks._common import iter_files
+from rootward.checks._common import iter_files, writable_tags
 from rootward.checks.base import BaseCheck
 from rootward.models import Severity
 
@@ -66,14 +66,19 @@ class CapabilitiesCheck(BaseCheck):
             return None
         flags = "+ep" if effective else "+p"
         listing = ",".join(f"cap_{n}" for n in names)
+        # a writable binary that holds a capability lets a normal user take it over; the
+        # tags let the scoring rule {capability, writable-by-user} (and path chains) fire
+        tags = ["capability", *writable_tags(path)]
+        writable_note = (" It can also be modified by an ordinary user, so the capability "
+                         "can be hijacked." if len(tags) > 1 else "")
         return self.finding(
             f"Dangerous capability on {path}", path,
             Severity.CRITICAL if critical else Severity.HIGH,
             f"{path} holds {', '.join('cap_' + n for n in critical + high)}. "
             "Programs with these capabilities can often be used to become root "
-            f"without being SUID. Evidence: {listing}{flags} ({stat.filemode(st.st_mode)}).",
+            f"without being SUID.{writable_note} Evidence: {listing}{flags} ({stat.filemode(st.st_mode)}).",
             f"Remove it if not needed: setcap -r {path}",
-            ["capability"])
+            tags)
 
 
 if __name__ == "__main__":
