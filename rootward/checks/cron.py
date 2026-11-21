@@ -2,13 +2,13 @@
 import glob
 import os
 import re
-import stat
 
-from rootward.checks._common import can_replace, writable_by_current_user
+from rootward.checks._common import can_replace, writable_tags
 from rootward.checks.base import BaseCheck
 from rootward.models import Finding, Severity
 
-SYSTEM_CRONTABS = ["/etc/crontab"] + sorted(glob.glob("/etc/cron.d/*"))
+SYSTEM_CRONTAB = "/etc/crontab"
+CRON_D_GLOB = "/etc/cron.d/*"  # globbed when discovering, so tests can patch it
 USER_SPOOLS = ("/var/spool/cron/crontabs", "/var/spool/cron")
 SCRIPT_DIRS = ("/etc/cron.hourly", "/etc/cron.daily", "/etc/cron.weekly", "/etc/cron.monthly")
 
@@ -17,6 +17,7 @@ _PATH_RE = re.compile(r"(?<![\w.~-])(/[\w./+-]+)")
 _INTERPRETERS = ("sh", "bash", "dash", "python", "python3", "perl", "ruby", "php", "node")
 _IGNORED_PREFIXES = ("/dev/", "/proc/", "/sys/")
 _WILDCARD_TOOLS = ("tar", "rsync", "chown", "chmod")
+_RUN_PARTS_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")  # Debian run-parts skips other names
 
 
 def parse_cron_line(line: str, system: bool = True):
@@ -34,19 +35,6 @@ def parse_cron_line(line: str, system: bool = True):
     if len(parts) < needed:
         return None
     return (parts[-2] if system else None), parts[-1]
-
-
-def _writable_tags(path: str) -> list:
-    try:
-        mode = os.stat(path).st_mode
-    except OSError:
-        return []
-    tags = []
-    if mode & stat.S_IWOTH:
-        tags.append("world-writable")
-    if writable_by_current_user(path):
-        tags.append("writable-by-user")
-    return tags
 
 
 def _plausible_targets(command: str) -> list:
@@ -79,7 +67,8 @@ class CronCheck(BaseCheck):
 
     @staticmethod
     def _discover() -> list:
-        found = [(p, True, None) for p in SYSTEM_CRONTABS if os.path.isfile(p)]
+        system = [SYSTEM_CRONTAB] + sorted(glob.glob(CRON_D_GLOB))
+        found = [(p, True, None) for p in system if os.path.isfile(p)]
         for spool in USER_SPOOLS:
             if os.path.isdir(spool):
                 found += [(p, False, os.path.basename(p)) for p in sorted(glob.glob(spool + "/*"))
@@ -100,10 +89,13 @@ class CronCheck(BaseCheck):
 
     def _audit_crontab(self, path: str, system: bool, owner) -> list:
         findings = []
-        tags = _writable_tags(path)
+        tags = writable_tags(path)
         if tags:
+            # a system crontab (or root's own) runs its jobs as root; a user's spool file does not
+            runs_as_root = system or owner == "root"
             findings.append(self._finding(
-                f"Writable crontab: {path}", Severity.HIGH, path, ["cron", *tags],
+                f"Writable crontab: {path}", Severity.HIGH, path,
+                [*(["cron"] if runs_as_root else []), *tags],
                 "The crontab itself can be edited, so its jobs can be replaced with any command."))
         try:
             with open(path, errors="replace") as handle:
@@ -123,7 +115,7 @@ class CronCheck(BaseCheck):
         findings = []
         as_root = user == "root"
         for target in _plausible_targets(command):
-            tags = _writable_tags(target)
+            tags = writable_tags(target)
             if not tags and can_replace(target):
                 tags = ["writable-by-user"]
             if not tags:
@@ -131,13 +123,16 @@ class CronCheck(BaseCheck):
             severity = Severity.CRITICAL if as_root else Severity.HIGH
             findings.append(self._finding(
                 f"Writable cron script run as {user}: {target}", severity, target,
-                ["cron", *(["root-owned"] if as_root else []), "script-writable", *tags],
+                # the "cron" tag (privileged execution for scoring) only for jobs that run as root
+                [*(["cron", "root-owned"] if as_root else []), "script-writable", *tags],
                 f"{target} is executed by cron as {user} but can be modified by an unprivileged user.",
                 f"{source}: {command}"))
-        if any(tool in command.split() for tool in _WILDCARD_TOOLS) and "*" in command:
+        if (any(os.path.basename(tok) in _WILDCARD_TOOLS for tok in command.split())
+                and "*" in command):
             findings.append(self._finding(
                 f"Wildcard in cron command run as {user}", Severity.MEDIUM, source,
-                ["cron"], "A wildcard passed to tar/rsync/chown/chmod can be abused with crafted "
+                ["cron"] if as_root else [],
+                "A wildcard passed to tar/rsync/chown/chmod can be abused with crafted "
                           "file names (wildcard injection).", f"{source}: {command}"))
         return findings
 
@@ -149,7 +144,11 @@ class CronCheck(BaseCheck):
             if self.aborted():
                 break
             path = os.path.join(directory, name)
-            tags = _writable_tags(path)
+            # run-parts only runs executable files with plain names; others are not executed
+            if (not _RUN_PARTS_NAME_RE.match(name) or not os.path.isfile(path)
+                    or not os.stat(path).st_mode & 0o111):
+                continue
+            tags = writable_tags(path)
             if not tags and can_replace(path):
                 tags = ["writable-by-user"]
             if tags:
