@@ -7,9 +7,11 @@ import tempfile
 import unittest
 from unittest import mock
 
-from rootward.checks._common import base_name, can_replace, writable_by_current_user, writable_tags
+from rootward.checks._common import (base_name, can_replace, iter_files, write_sources,
+                                     writable_by_current_user, writable_tags)
 from rootward.checks.capabilities import CapabilitiesCheck
-from rootward.checks.cron import CronCheck
+from rootward.checks.cron import CronCheck, _uid_of
+from rootward.checks.path_perms import PathPermsCheck
 from rootward.checks.sudo_rules import parse_sudo_output
 from rootward.models import Severity
 
@@ -30,6 +32,21 @@ class Tmp(unittest.TestCase):
 def fake_stat(mode, gid, uid=1000):
     """A stat result for a regular file with the given permission bits, group and owner."""
     return os.stat_result((mode, 0, 0, 1, uid, gid, 0, 0, 0, 0))
+
+
+def dir_stat(mode, uid, gid):
+    """A stat result for a directory with the given permission bits, owner and group."""
+    return fake_stat(0o40000 | mode, gid, uid)
+
+
+def patch_stat(overrides):
+    """Patch os.stat so the given paths return fake results and every other path stays real."""
+    real = os.stat
+
+    def fake(path, *args, **kwargs):
+        return overrides[path] if path in overrides else real(path, *args, **kwargs)
+
+    return mock.patch("os.stat", side_effect=fake)
 
 
 class WritableByModeTests(Tmp):
@@ -69,11 +86,64 @@ class WritableByModeTests(Tmp):
     def test_missing_path_is_not_writable(self):
         self.assertFalse(writable_by_current_user(os.path.join(self.tmp, "nope")))
 
-    @unittest.skipIf(os.geteuid() == 0, "needs a non-root owner of the file")
     def test_sticky_dir_file_owned_by_a_user_can_be_replaced(self):
-        os.chmod(self.tmp, 0o1777)
-        path = self.make("mine", 0o644)  # owned by the (non-root) test user
-        self.assertTrue(can_replace(path))
+        parent, path = "/tmp/sticky", "/tmp/sticky/f"  # fake stats: never skipped, any scan user
+        sticky = dir_stat(0o1777, uid=0, gid=0)
+        with patch_stat({parent: sticky, path: fake_stat(0o100644, gid=1000, uid=1000)}):
+            self.assertTrue(can_replace(path))
+            self.assertFalse(can_replace(path, run_as_uid=1000))  # the account's own file
+        with patch_stat({parent: sticky, path: fake_stat(0o100644, gid=0, uid=0)}):
+            self.assertFalse(can_replace(path))  # root-owned: a normal user cannot replace it
+
+
+class WriteSourceTests(unittest.TestCase):
+    """Review point A: owner-write counts unless the owner is the account that runs the file."""
+
+    def sources(self, stat_result, **kwargs):
+        with mock.patch("os.stat", return_value=stat_result):
+            return write_sources("/anything", **kwargs)
+
+    def test_owner_write_counts_for_other_accounts(self):
+        mine = fake_stat(0o100600, gid=1000, uid=1000)
+        self.assertEqual(self.sources(mine), {"owner"})
+        self.assertEqual(self.sources(mine, run_as_uid=1001), {"owner"})
+
+    def test_owner_write_is_ignored_for_the_account_that_runs_the_file(self):
+        self.assertEqual(self.sources(fake_stat(0o100600, gid=1000, uid=1000), run_as_uid=1000), set())
+
+    def test_group_and_world_still_count_for_the_runner(self):
+        self.assertEqual(self.sources(fake_stat(0o100660, gid=100, uid=1000), run_as_uid=1000), {"group"})
+        self.assertEqual(self.sources(fake_stat(0o100666, gid=0, uid=0), run_as_uid=1000), {"world"})
+
+    def test_root_owned_file_has_no_sources(self):
+        self.assertEqual(self.sources(fake_stat(0o100644, gid=0, uid=0)), set())
+
+
+class IterFilesDeviceTests(Tmp):
+    """Review point E: do not cross into other filesystems unless asked."""
+
+    def test_other_filesystems_are_not_entered(self):
+        main, mount = os.path.join(self.tmp, "a"), os.path.join(self.tmp, "mnt")
+        os.mkdir(main)
+        os.mkdir(mount)
+        open(os.path.join(main, "f"), "w").close()
+        open(os.path.join(mount, "g"), "w").close()
+        real = os.lstat
+
+        def fake(path, *args, **kwargs):
+            st = real(path, *args, **kwargs)
+            if path == mount:  # pretend this directory is a mount of another filesystem
+                fields = list(st)
+                fields[2] = st.st_dev + 1
+                return os.stat_result(tuple(fields[:10]))
+            return st
+
+        def names(**kw):
+            return sorted(os.path.basename(p) for p, _ in iter_files([self.tmp], **kw))
+
+        with mock.patch("os.lstat", side_effect=fake):
+            self.assertEqual(names(), ["f"])
+            self.assertEqual(names(cross_mounts=True), ["f", "g"])
 
 
 class CronReviewTests(Tmp):
@@ -117,6 +187,77 @@ class CronReviewTests(Tmp):
                 mock.patch("rootward.checks.cron.USER_SPOOLS", ()):
             paths = [p for p, _, _ in CronCheck._discover()]
         self.assertEqual(paths, [main_tab, job])
+
+
+class CronOwnerTests(Tmp):
+    """Review points A and C for cron."""
+
+    def test_users_own_spool_crontab_is_not_flagged(self):
+        tab = self.make("alice", 0o600, "*/5 * * * * echo hi\n")
+        with patch_stat({tab: fake_stat(0o100600, gid=100, uid=1000)}), \
+                mock.patch("rootward.checks.cron._uid_of", return_value=1000):
+            found = CronCheck(crontabs=[(tab, False, "alice")], script_dirs=[]).run()
+        self.assertEqual(found, [])
+
+    def test_spool_crontab_writable_by_others_is_high_without_cron_tag(self):
+        tab = self.make("alice", 0o600, "*/5 * * * * echo hi\n")
+        with patch_stat({tab: fake_stat(0o100666, gid=100, uid=1000)}), \
+                mock.patch("rootward.checks.cron._uid_of", return_value=1000):
+            found = CronCheck(crontabs=[(tab, False, "alice")], script_dirs=[]).run()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, Severity.HIGH)
+        self.assertNotIn("cron", found[0].tags)
+
+    def test_writable_system_crontab_is_critical(self):  # review point C
+        tab = self.make("crontab", 0o644, "")
+        with patch_stat({tab: fake_stat(0o100666, gid=0, uid=0)}):
+            found = CronCheck(crontabs=[(tab, True, None)], script_dirs=[]).run()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, Severity.CRITICAL)
+        self.assertIn("cron", found[0].tags)
+        self.assertIn("world-writable", found[0].tags)
+
+    def run_job(self, user):
+        script = self.make("job.sh", 0o755)
+        tab = self.make("crontab", 0o444, f"*/5 * * * * {user} {script}\n")
+        stats = {script: fake_stat(0o100755, gid=1000, uid=1000),  # owned by account 1000
+                 self.tmp: dir_stat(0o755, uid=0, gid=0)}
+        with patch_stat(stats), mock.patch("rootward.checks.cron._uid_of",
+                                           side_effect=lambda name: {"alice": 1000}.get(name)):
+            return CronCheck(crontabs=[(tab, True, None)], script_dirs=[]).run()
+
+    def test_uid_lookup(self):
+        self.assertEqual(_uid_of("root"), 0)
+        self.assertIsNone(_uid_of("no-such-account-rootward"))  # unknown: no owner exemption
+        self.assertIsNone(_uid_of(None))
+
+    def test_script_owned_by_the_account_that_runs_it_is_not_flagged(self):
+        self.assertEqual(self.run_job("alice"), [])
+
+    def test_script_owned_by_a_normal_user_but_run_by_root_is_critical(self):
+        found = self.run_job("root")
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, Severity.CRITICAL)
+        for tag in ("cron", "root-owned", "script-writable", "writable-by-user"):
+            self.assertIn(tag, found[0].tags)
+
+
+class PathGroupTests(unittest.TestCase):
+    """Review point B: Debian/Kali ship /usr/local/bin as root:staff 2775."""
+
+    def test_standard_system_dir_writable_only_by_a_group_is_medium_and_untagged(self):
+        with patch_stat({"/usr/local/bin": dir_stat(0o2775, uid=0, gid=50)}):
+            found = PathPermsCheck(path_value="/usr/local/bin:/usr/bin").run()
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0].severity, Severity.MEDIUM)
+        self.assertEqual(found[0].tags, {"path-writable"})  # no writable-by-user: no chain
+
+    def test_other_group_writable_directory_is_still_flagged(self):
+        with patch_stat({"/opt/shared": dir_stat(0o2775, uid=0, gid=100)}):
+            found = PathPermsCheck(path_value="/opt/shared:/usr/bin").run()
+        self.assertEqual(len(found), 1)
+        self.assertGreaterEqual(found[0].severity, Severity.HIGH)
+        self.assertIn("writable-by-user", found[0].tags)
 
 
 class SudoReviewTests(unittest.TestCase):
