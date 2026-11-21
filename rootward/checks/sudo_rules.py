@@ -24,10 +24,18 @@ def _info(title: str, description: str) -> Finding:
                  "Run RootWard from the account you want to audit, in an interactive session.")
 
 
+def _runs_as_root(runas: str) -> bool:
+    """True if the (runas) part of a sudo rule includes root or ALL, e.g. 'root', 'ALL : ALL'."""
+    return bool({"root", "ALL"} & set(re.split(r"[\s,:]+", runas)))
+
+
 def _assess_rule(runas: str, options: set, command: str) -> Finding:
     nopasswd = "NOPASSWD" in options
     allows_all = command == "ALL"
-    tags = ["sudo-nopasswd"] if nopasswd else []
+    as_root = _runs_as_root(runas)
+    # the tags below mean "can reach root"; a rule that only runs as another account gets none,
+    # so the scoring rules (which assume root) do not escalate it
+    tags = ["sudo-nopasswd"] if nopasswd and as_root else []
     severity = Severity.MEDIUM if nopasswd else Severity.LOW
 
     if allows_all:
@@ -37,8 +45,11 @@ def _assess_rule(runas: str, options: set, command: str) -> Finding:
         if base_name(command.split()[0]) in GTFO_BINARIES:
             severity = bump(severity, 2)
         if "*" in command:
-            tags.append("sudo-wildcard")
+            if as_root:
+                tags.append("sudo-wildcard")
             severity = bump(severity, 1)
+    if not as_root and severity > Severity.HIGH:
+        severity = Severity.HIGH  # full control of another account is serious, but it is not root
 
     password = "without a password" if nopasswd else "with a password"
     # path = the program sudo runs, so scoring can chain it with a writable file
@@ -74,7 +85,7 @@ def parse_sudo_output(text: str) -> list:
             options.add(option.group(1))
             rest = rest[option.end():]
         for command in (c.strip() for c in rest.split(",")):
-            if command:
+            if command and not command.startswith("!"):  # "!cmd" forbids a command: not a risk
                 findings.append(_assess_rule(match.group("runas").strip(), options, command))
     return findings
 
