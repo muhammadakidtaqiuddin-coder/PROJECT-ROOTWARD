@@ -3,6 +3,11 @@ import glob
 import os
 import re
 
+try:
+    import pwd
+except ImportError:  # not a POSIX system: no account lookup
+    pwd = None
+
 from rootward.checks._common import can_replace, writable_tags
 from rootward.checks.base import BaseCheck
 from rootward.models import Finding, Severity
@@ -35,6 +40,16 @@ def parse_cron_line(line: str, system: bool = True):
     if len(parts) < needed:
         return None
     return (parts[-2] if system else None), parts[-1]
+
+
+def _uid_of(user):
+    """uid of an account name, or None when unknown (then no owner exemption applies)."""
+    if pwd is None or not user:
+        return None
+    try:
+        return pwd.getpwnam(user).pw_uid
+    except KeyError:
+        return None
 
 
 def _plausible_targets(command: str) -> list:
@@ -89,14 +104,18 @@ class CronCheck(BaseCheck):
 
     def _audit_crontab(self, path: str, system: bool, owner) -> list:
         findings = []
-        tags = writable_tags(path)
+        # a system crontab (or root's own) runs its jobs as root; a user's spool file does not.
+        # A user editing their own spool crontab is normal, so the owner is exempt there.
+        runs_as_root = system or owner == "root"
+        tags = writable_tags(path, None if system else _uid_of(owner))
         if tags:
-            # a system crontab (or root's own) runs its jobs as root; a user's spool file does not
-            runs_as_root = system or owner == "root"
             findings.append(self._finding(
-                f"Writable crontab: {path}", Severity.HIGH, path,
+                f"Writable crontab: {path}",
+                Severity.CRITICAL if runs_as_root else Severity.HIGH, path,
                 [*(["cron"] if runs_as_root else []), *tags],
-                "The crontab itself can be edited, so its jobs can be replaced with any command."))
+                "The crontab itself can be edited, so its jobs can be replaced with any command"
+                + (", and they run as root: this is root code execution." if runs_as_root
+                   else ".")))
         try:
             with open(path, errors="replace") as handle:
                 lines = handle.read().splitlines()
@@ -114,9 +133,10 @@ class CronCheck(BaseCheck):
     def _audit_command(self, source: str, user: str, command: str) -> list:
         findings = []
         as_root = user == "root"
+        uid = _uid_of(user)  # the account running the job: its own files are not an escalation
         for target in _plausible_targets(command):
-            tags = writable_tags(target)
-            if not tags and can_replace(target):
+            tags = writable_tags(target, uid)
+            if not tags and can_replace(target, uid):
                 tags = ["writable-by-user"]
             if not tags:
                 continue
