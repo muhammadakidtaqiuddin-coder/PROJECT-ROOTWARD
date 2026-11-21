@@ -12,6 +12,15 @@ from rootward.checks.base import BaseCheck
 from rootward.models import Severity
 
 SYSTEM_DIRS = ("/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin")
+# Debian/Kali ship exactly these two as root:staff 2775 on purpose (Debian policy 9.1.2); every
+# other directory that a non-root group can write is a real finding, /usr/bin included.
+GROUP_WRITABLE_DEFAULTS = ("/usr/local/sbin", "/usr/local/bin")
+DEFAULT_GROUP = "staff"
+
+
+def _normalize(entry: str) -> str:
+    """'/usr/local/bin/' -> '/usr/local/bin' (the root '/' stays '/')."""
+    return entry.rstrip("/") or "/"
 
 
 def _group_name(gid: int) -> str:
@@ -34,14 +43,16 @@ class PathPermsCheck(BaseCheck):
     def run(self) -> list:
         findings = []
         entries = self.path_value.split(os.pathsep)
-        first_system = next((i for i, e in enumerate(entries) if e in SYSTEM_DIRS), len(entries))
+        first_system = next((i for i, e in enumerate(entries) if _normalize(e) in SYSTEM_DIRS),
+                            len(entries))
         seen = set()
         for index, entry in enumerate(entries):
             if self.aborted():
                 break
-            if entry in seen:
+            key = _normalize(entry) if entry.startswith("/") else entry
+            if key in seen:
                 continue
-            seen.add(entry)
+            seen.add(key)
             finding = self._assess(index, entry, index < first_system)
             if finding:
                 findings.append(finding)
@@ -71,17 +82,20 @@ class PathPermsCheck(BaseCheck):
         sources = write_sources(entry)
         if not sources:
             return None
-        if sources == {"group"} and entry in SYSTEM_DIRS:
-            # e.g. Debian/Kali ship /usr/local/bin as root:staff 2775 on purpose: worth a note,
-            # but no "writable-by-user" tag, so scoring does not chain it to CRITICAL
-            group = _group_name(st.st_gid)
+        group = _group_name(st.st_gid)
+        if (sources == {"group"} and _normalize(entry) in GROUP_WRITABLE_DEFAULTS
+                and group == DEFAULT_GROUP):
+            # Debian/Kali's own root:staff 2775 on /usr/local/bin and /usr/local/sbin: worth a
+            # note, but it must carry NO tag at all. scoring.py treats "path-writable" as well as
+            # "writable-by-user" and "world-writable" as writable tags, and would chain any of
+            # them with a SUID/cron/sudo finding in the same directory up to CRITICAL.
             return self._finding(
                 f"System PATH directory writable by group {group}: {entry}", Severity.MEDIUM,
                 f"PATH[{index}] = {entry} ({stat.filemode(st.st_mode)} group {group})",
-                ["path-writable"],
+                [],
                 f"{entry} is a standard system directory writable only by the non-root group "
                 f"{group} (a Debian/Kali default for /usr/local). Members of that group can plant "
-                "programs that root runs; keep the group's membership small.", path=entry)
+                "programs that root runs; keep the group's membership small.", path=_normalize(entry))
         tags = writable_tags(entry)
         severity = Severity.CRITICAL if before_system else Severity.HIGH
         position = "before the system directories" if before_system else "in PATH"
@@ -89,7 +103,7 @@ class PathPermsCheck(BaseCheck):
             f"Writable PATH directory: {entry}", severity, f"PATH[{index}] = {entry} "
             f"({stat.filemode(st.st_mode)})", ["path-writable", *tags],
             f"{entry} is writable and listed {position}. A planted program with a common "
-            "command name can be run by a privileged user whose PATH includes it.", path=entry)
+            "command name can be run by a privileged user whose PATH includes it.", path=_normalize(entry))
 
     def _finding(self, title, severity, evidence, tags, description, path=None):
         return self.finding(title, path or evidence, severity,
