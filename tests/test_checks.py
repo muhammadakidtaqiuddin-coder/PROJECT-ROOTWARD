@@ -121,7 +121,7 @@ class CapabilityTests(Tmp):
         self.assertTrue(effective)
 
     def test_check_flags_setuid_cap(self):
-        self.make("python3", 0o755)
+        self.make("python3", 0o555)  # no write bits: only the capability tag applies
         raw = struct.pack("<IIIII", 0x02000001, 1 << 7, 0, 0, 0)
         with mock.patch("os.getxattr", return_value=raw):
             found = CapabilitiesCheck(roots=[self.tmp]).run()
