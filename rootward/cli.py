@@ -149,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         except OSError as exc:
             print(f"could not save report: {exc}", file=sys.stderr)
-            return 1
+            return 130 if result.aborted else 1
         print(f"JSON report saved to {report_path}")
 
     return 130 if result.aborted else (1 if result.errors else 0)
