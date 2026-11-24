@@ -33,9 +33,9 @@ def scored(findings):
     return findings, summarize(findings)
 
 
-def render(result, findings, summary):
+def render(result, findings, summary, width=140):
     buffer = io.StringIO()
-    console = report.Console(file=buffer, width=140, force_terminal=False)
+    console = report.Console(file=buffer, width=width, force_terminal=False)
     report.print_report(result, findings, summary, console=console)
     return buffer.getvalue()
 
@@ -147,6 +147,26 @@ class PrintReportTests(unittest.TestCase):
         self.assertIn("Risk: CRITICAL", text)
         self.assertIn("findings: 5", text)
         self.assertIn("Scan finished in 1.50s.", text)
+
+    def test_wide_terminal_uses_the_table(self):
+        findings, summary = scored([make_finding()])
+        text = render(make_result(), findings, summary, width=report.WIDE_LAYOUT_MIN_WIDTH)
+        self.assertIn("Severity", text)  # table header
+
+    def test_narrow_terminal_lists_findings_instead_of_a_table(self):
+        findings, summary = scored([make_finding(Severity.CRITICAL, "/usr/bin/x", "Chain: y")])
+        text = render(make_result(), findings, summary, width=report.WIDE_LAYOUT_MIN_WIDTH - 1)
+        self.assertNotIn("Severity", text)
+        self.assertIn("[CRITICAL] SUID binary: /usr/bin/x (suid)", text)
+        self.assertIn("  Path: /usr/bin/x", text)
+        self.assertIn("  Risk correlation: Chain: y", text)
+
+    def test_narrow_listing_does_not_repeat_the_path_in_a_column(self):
+        findings, summary = scored([make_finding(path="/opt/a/long/path/tool")])
+        text = render(make_result(), findings, summary, width=80)
+        # once in the title, once on the Path line, once inside the explanation text at most
+        self.assertLessEqual(text.count("/opt/a/long/path/tool"), 3)
+        self.assertLess(len(text.splitlines()), 20)
 
     def test_worst_finding_is_listed_first(self):
         findings, summary = scored([make_finding(Severity.LOW, "/low-file"),
