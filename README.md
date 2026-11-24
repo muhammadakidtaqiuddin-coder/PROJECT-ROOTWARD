@@ -49,7 +49,6 @@ Beyond the individual checks:
 - **False-positive control.** Standard distribution SUID programs are not reported, and a user editing their own crontab is not an escalation. The Debian/Kali default `root:staff 2775` on `/usr/local/bin` is reported as MEDIUM only and never chained to CRITICAL.
 - **Add a check by adding a file.** Every module in `rootward/checks/` that subclasses `BaseCheck` is discovered automatically.
 
-<!-- TODO (Anam/Faris): the rich table and JSON report live in rootward/report.py but cli.py still prints its own plain text. Wire print_report and write_json_report into cli.py BEFORE v1.0.0, or reword the "Coloured terminal table" and "labelled JSON report" bullets and the Usage/Example output sections to match what the CLI really does. -->
 <!-- TODO (Haziq/Faris): add a terminal screenshot of a real scan on the demo VM here, e.g. docs/scan-example.png -->
 
 ## Attack lifecycle mapping
@@ -134,8 +133,8 @@ python -m rootward --checks suid,cron
 | `--checks IDS` | Comma-separated check IDs to run (default: all) |
 | `--dry-run` | List the checks that would run without inspecting the system |
 | `--list-checks` | List available checks and exit |
-
-<!-- TODO (Anam): document --output and --no-report here once cli.py calls report.write_json_report -->
+| `--output DIR` | Folder for the local JSON report (default: `output/`) |
+| `--no-report` | Show terminal results without writing a JSON report |
 
 **Run it as the account you want to audit.** `sudo_rules` asks `sudo -n -l` for the *current user's* rights (it never prompts for a password), and the filesystem checks report what an ordinary user could abuse. Running as root still gives the same answer, because writability is judged from permission bits and not from who runs the scan.
 
@@ -163,7 +162,7 @@ Risk: CRITICAL (score 100/100)
 
 ### JSON report
 
-`rootward.report.write_json_report` saves a report to a local directory (default `output/`) named `rootward-<hostname>-<YYYYmmdd-HHMMSS>.json`. It holds the tool version, timestamp, hostname, scope, checks run and skipped, errors, whether the scan was aborted, the summary and every finding. The file is created owner-only (mode 0600), is never overwritten, and `output/` is excluded by `.gitignore`.
+After a scan, RootWard saves a report to a local directory (default `output/`) named `rootward-<hostname>-<YYYYmmdd-HHMMSS>.json`. Use `--output DIR` to choose another folder or `--no-report` to disable JSON output. A dry run never creates a report. The report holds the tool version, timestamp, hostname, scope, checks run and skipped, errors, whether the scan was aborted, the summary and every finding. The file is created owner-only (mode 0600), is never overwritten, and `output/` is excluded by `.gitignore`.
 
 ## Ethical considerations
 
@@ -171,7 +170,7 @@ RootWard is built so that running it by accident cannot cause harm.
 
 | Guardrail | How it works | Why |
 |---|---|---|
-| Legal banner | Every run starts with a notice citing the Computer Crimes Act 1997 | Users are reminded that unauthorized access is an offence |
+| Legal banner and authorization prompt | The CLI displays a notice citing the Computer Crimes Act 1997 and requires the user to type `I AUTHORIZE` before a real scan | Users are reminded that unauthorized access is an offence and must affirm permission |
 | Safe default scope | Defaults to `127.0.0.1`; any non-loopback scope is rejected with exit code 2 | The tool audits only the machine it runs on and cannot be pointed at someone else's host |
 | Read-only | Reads file metadata, extended attributes, cron files and `sudo -n -l`; never writes, deletes or exploits | An audit tool must not change the system it audits |
 | Dry run | `--dry-run` lists the checks without running them | Users can review what will happen first |
@@ -179,8 +178,6 @@ RootWard is built so that running it by accident cannot cause harm.
 | No network, no exfiltration | The tool opens no network connection and sends nothing out | Findings describe a machine's weaknesses and must stay on it |
 | Local, labelled output | Reports go only to a local directory, labelled with hostname and time, mode 0600, git-ignored | Clear audit trail and no accidental commit of sensitive findings |
 | Filesystem limits | `/proc`, `/sys`, `/dev`, `/run` and other mounted filesystems are not walked | Avoids slow or intrusive scans |
-
-<!-- TODO (Anam): once the explicit "I AUTHORIZE" confirmation prompt exists in cli.py, add it to this table and to the legal disclaimer. Do not claim it before it is implemented. -->
 
 ## Rules of Engagement (RoE)
 
@@ -219,7 +216,7 @@ There are two situations.
 
 ## Legal disclaimer
 
-RootWard is a read-only local security auditor for systems you own or are authorized to assess. **Unauthorized access to computer systems may violate the Computer Crimes Act 1997 (Act 563) of Malaysia and other applicable laws.** You are responsible for obtaining permission before use. The authors accept no liability for misuse or for damage resulting from the use of this tool. It is provided for education and authorized security assessment, "as is", without warranty.
+RootWard is a read-only local security auditor for systems you own or are authorized to assess. **Unauthorized access to computer systems may violate the Computer Crimes Act 1997 (Act 563) of Malaysia and other applicable laws.** Before a real scan, the CLI asks you to type `I AUTHORIZE`; that confirmation does not grant permission. You are responsible for obtaining permission before use. The authors accept no liability for misuse or for damage resulting from the use of this tool. It is provided for education and authorized security assessment, "as is", without warranty.
 
 ## Limitations
 
