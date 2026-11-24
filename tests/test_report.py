@@ -121,6 +121,7 @@ class JsonReportTests(unittest.TestCase):
         self.assertTrue(self.out.is_dir())
 
 
+@unittest.skipIf(report.Console is None, "rich is not installed")
 class PrintReportTests(unittest.TestCase):
     def test_table_shows_every_severity_and_the_summary(self):
         findings, summary = scored([make_finding(sev, f"/p/{sev.name}") for sev in Severity])
