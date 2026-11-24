@@ -175,12 +175,20 @@ def _open_new_file(directory: Path, stem: str):
 
 
 def write_json_report(result, findings, summary, scope,
-                      out_dir=DEFAULT_OUTPUT_DIR, now: datetime | None = None) -> Path:
+                      out_dir=DEFAULT_OUTPUT_DIR, now: datetime | None = None) -> Path | None:
     """Save the scan as JSON in `out_dir` and return the file path.
 
     The file is named rootward-<hostname>-<YYYYmmdd-HHMMSS>.json. Partial results from a
     scan stopped by the kill switch are saved too, with "aborted": true.
+
+    A dry run inspects nothing, so no file is written and the result is None.
+
+    Raises OSError when the report cannot be written: PermissionError if `out_dir` is not
+    writable, FileExistsError or NotADirectoryError if `out_dir` exists but is a file. The
+    caller (cli.py) should catch OSError and report it without hiding the scan results.
     """
+    if result.dry_run:
+        return None
     generated_at = now or datetime.now().astimezone()
     directory = Path(out_dir)
     directory.mkdir(parents=True, exist_ok=True)

@@ -115,6 +115,22 @@ class JsonReportTests(unittest.TestCase):
         self.assertEqual(second.name, first.stem + "-2.json")
         self.assertTrue(first.exists() and second.exists())
 
+    def test_dry_run_writes_nothing_and_returns_none(self):
+        findings, summary = scored([])
+        result = make_result(dry_run=True, checks_planned=["cron"])
+        path = report.write_json_report(result, findings, summary, "127.0.0.1",
+                                        out_dir=self.out, now=FIXED_TIME)
+        self.assertIsNone(path)
+        self.assertFalse(self.out.exists())
+
+    def test_an_output_path_that_is_a_file_raises_oserror(self):
+        blocker = Path(self._tmp.name) / "not-a-dir"
+        blocker.write_text("x", encoding="utf-8")
+        findings, summary = scored([make_finding()])
+        with self.assertRaises(OSError):
+            report.write_json_report(make_result(), findings, summary, "127.0.0.1",
+                                     out_dir=blocker, now=FIXED_TIME)
+
     def test_missing_output_dir_is_created(self):
         self.assertFalse(self.out.exists())
         self.write()
