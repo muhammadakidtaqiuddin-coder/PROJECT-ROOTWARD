@@ -64,6 +64,14 @@ def _assess_rule(runas: str, options: set, command: str) -> Finding:
         tags)
 
 
+def _apply_option(options: set, tag: str) -> None:
+    """Update the tags in force after reading one, e.g. PASSWD cancels an earlier NOPASSWD."""
+    opposite = {"NOPASSWD": "PASSWD", "PASSWD": "NOPASSWD"}.get(tag)
+    if opposite:
+        options.discard(opposite)
+    options.add(tag)
+
+
 def parse_sudo_output(text: str) -> list:
     """Turn the text printed by `sudo -l` into findings (pure function, easy to unit test)."""
     findings = []
@@ -80,13 +88,16 @@ def parse_sudo_output(text: str) -> list:
         match = _RULE_RE.match(line)
         if not match:
             continue
-        rest, options = match.group("rest").strip(), set()
-        while (option := _OPTION_RE.match(rest)):
-            options.add(option.group(1))
-            rest = rest[option.end():]
-        for command in (c.strip() for c in rest.split(",")):
+        # Tags such as NOPASSWD: apply to the commands after them until another tag overrides
+        # them, so "NOPASSWD: /bin/a, PASSWD: /bin/b" is two rules with different options.
+        options = set()
+        for command in (c.strip() for c in match.group("rest").split(",")):
+            while (option := _OPTION_RE.match(command)):
+                _apply_option(options, option.group(1))
+                command = command[option.end():]
+            command = command.strip()
             if command and not command.startswith("!"):  # "!cmd" forbids a command: not a risk
-                findings.append(_assess_rule(match.group("runas").strip(), options, command))
+                findings.append(_assess_rule(match.group("runas").strip(), set(options), command))
     return findings
 
 

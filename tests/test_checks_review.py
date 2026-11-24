@@ -167,6 +167,17 @@ class CronReviewTests(Tmp):
         self.assertNotIn("cron", found[0].tags)
         self.assertNotIn("root-owned", found[0].tags)
 
+    def test_unreadable_script_dir_is_skipped_not_fatal(self):
+        with mock.patch("rootward.checks.cron.os.listdir", side_effect=PermissionError("denied")):
+            found = CronCheck(crontabs=[], script_dirs=[self.tmp]).run()
+        self.assertEqual(found, [])
+
+    def test_script_that_vanishes_between_listing_and_stat_is_skipped(self):
+        self.make("job", 0o777)
+        with mock.patch("rootward.checks.cron.os.stat", side_effect=FileNotFoundError):
+            found = CronCheck(crontabs=[], script_dirs=[self.tmp]).run()
+        self.assertEqual(found, [])
+
     def test_script_dir_skips_dotted_and_non_executable_names(self):
         directory = os.path.join(self.tmp, "cron.daily")
         os.mkdir(directory)
@@ -331,6 +342,22 @@ class SudoReviewTests(unittest.TestCase):
     def test_negated_command_is_not_reported(self):  # review point 4a
         found = self.parse("(root) NOPASSWD: ALL, !/usr/bin/su")
         self.assertEqual([f.title for f in found], ["sudo rule: ALL"])
+
+    def test_password_tag_overrides_an_earlier_nopasswd(self):
+        found = self.parse("(root) NOPASSWD: /usr/bin/id, PASSWD: /usr/bin/ls")
+        by_command = {f.title: f for f in found}
+        self.assertEqual(set(by_command), {"sudo rule: /usr/bin/id", "sudo rule: /usr/bin/ls"})
+        self.assertIn("sudo-nopasswd", by_command["sudo rule: /usr/bin/id"].tags)
+        self.assertNotIn("sudo-nopasswd", by_command["sudo rule: /usr/bin/ls"].tags)
+        self.assertIn("with a password", by_command["sudo rule: /usr/bin/ls"].explanation)
+
+    def test_nopasswd_applies_to_every_command_after_it(self):
+        found = self.parse("(root) NOPASSWD: /usr/bin/id, /usr/bin/ls")
+        self.assertEqual([("sudo-nopasswd" in f.tags) for f in found], [True, True])
+
+    def test_nopasswd_after_a_password_command_applies_only_to_what_follows(self):
+        found = self.parse("(root) PASSWD: /usr/bin/id, NOPASSWD: /usr/bin/ls")
+        self.assertEqual([("sudo-nopasswd" in f.tags) for f in found], [False, True])
 
     def test_only_negated_commands_give_no_findings(self):
         self.assertEqual(self.parse("(root) NOPASSWD: !/usr/bin/su, !/usr/bin/passwd"), [])
