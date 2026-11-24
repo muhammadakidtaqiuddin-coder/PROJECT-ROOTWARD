@@ -255,7 +255,7 @@ class CronOwnerTests(Tmp):
 
 
 class PathGroupTests(unittest.TestCase):
-    """Review points B and the third review: Debian/Kali ship /usr/local/bin as root:staff 2775."""
+    """Review points B and the third review: Debian ships /usr/local/bin as root:staff 2775."""
 
     def check(self, path_value, stats, group="staff"):
         with patch_stat(stats), mock.patch("rootward.checks.path_perms._group_name",

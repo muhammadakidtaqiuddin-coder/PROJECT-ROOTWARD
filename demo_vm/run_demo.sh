@@ -43,7 +43,9 @@ PY
 chmod a+r "$T/demo_scan.py"
 
 echo "== read-only audit as $DEMO_USER (PATH includes the writable demo bin first) =="
-echo "(On Debian/Kali this PATH also contains /usr/local/bin, which is root:staff 2775: expect one extra MEDIUM 'System PATH directory writable by group staff' finding.)"
+if (( 8#$(stat -c %a /usr/local/bin 2>/dev/null || echo 0) & 8#020 )); then
+  echo "(This PATH also contains /usr/local/bin, which is group-writable here: expect one extra MEDIUM 'System PATH directory writable by group staff' finding.)"
+fi
 cd "$T"   # a directory the demo user can read (the caller's cwd may not be)
 if [[ "${1:-}" == "--cli" ]]; then
   runuser -u "$DEMO_USER" -- env \

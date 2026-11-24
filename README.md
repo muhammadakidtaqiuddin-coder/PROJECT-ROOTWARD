@@ -46,7 +46,7 @@ Beyond the individual checks:
 - **Remediation for every finding**, with the evidence that triggered it.
 - **Risk score** from 0 to 100 and an overall rating (INFO, LOW, MEDIUM, HIGH, CRITICAL).
 - **Coloured terminal table** (via `rich`, with a plain-text fallback) and a **labelled JSON report**.
-- **False-positive control.** Standard distribution SUID programs are not reported, and a user editing their own crontab is not an escalation. The Debian/Kali default `root:staff 2775` on `/usr/local/bin` is reported as MEDIUM only and never chained to CRITICAL.
+- **False-positive control.** Standard distribution SUID programs are not reported, and a user editing their own crontab is not an escalation. The Debian default `root:staff 2775` on `/usr/local/bin` is reported as MEDIUM only and never chained to CRITICAL.
 - **Add a check by adding a file.** Every module in `rootward/checks/` that subclasses `BaseCheck` is discovered automatically.
 
 <!-- TODO (Haziq/Faris): add a terminal screenshot of a real scan on the demo VM here, e.g. docs/scan-example.png -->

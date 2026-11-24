@@ -26,7 +26,7 @@ cd demo_vm && chmod +x *.sh
 ./verify_on_vm.sh --dry-run    # safe: prints the environment and runs the real path_perms check, changes nothing
 ./verify_on_vm.sh              # real run: asks for sudo, then you type TEST VM
 ```
-The dry run answers one question for Debian and Kali: `/usr/local/bin` and `/usr/local/sbin` are both `root:staff 2775` there, so `path_perms` should report two MEDIUM findings (one per directory) with no tags; on Ubuntu (`root:root 755`) it reports nothing. For screenshots use a terminal at least 120 columns wide.
+The dry run shows how this distribution treats `/usr/local`. Stock Debian ships `/usr/local/bin` and `/usr/local/sbin` as `root:staff 2775`, so `path_perms` reports two MEDIUM findings (one per directory) with no tags. Kali and Ubuntu use `root:root 755` and report nothing (checked on Kali Rolling in VirtualBox: 0 findings). For screenshots use a terminal at least 120 columns wide.
 
 ## Order
 ```bash
@@ -49,11 +49,12 @@ Optional, for the screenshot: `sudo ./run_demo.sh --cli` runs the real tool as `
 | `Defaults:rwdemo env_keep+=LD_PRELOAD` | `sudo_rules` | HIGH, tag `sudo-env-keep` |
 | `/opt/rootward-demo/python3-cap` with `cap_setuid+ep` | `capabilities` | CRITICAL |
 | `PATH` starts with the world-writable `/opt/rootward-demo/bin` (set by `run_demo.sh`) | `path_perms` | CRITICAL (writable, before the system directories) |
-| *(not planted)* `run_demo.sh` also puts `/usr/local/bin` in `PATH`; on Debian/Kali it is `root:staff 2775` | `path_perms` | one extra MEDIUM "System PATH directory writable by group staff"; normal on Debian/Kali, absent on Ubuntu |
+| *(not planted)* `run_demo.sh` also puts `/usr/local/bin` in `PATH`; on stock Debian it is `root:staff 2775` | `path_perms` | one extra MEDIUM "System PATH directory writable by group staff" on Debian only; absent on Kali and Ubuntu |
+| *(not planted)* the SUID programs the distribution already has | `suid` | MEDIUM each when they are not on the allowlist; on Kali Rolling with Kismet installed that is about 14 lines (`kismet_cap_*`, `rsh-redone-*`, `pppd`); they sort below the CRITICAL findings |
 
 The cron job only appends a timestamp to `/opt/rootward-demo/backup.log`; nothing here exploits anything.
 
 ## Notes
 - `run_demo.sh` copies the repository's `rootward/` package to a temporary directory so the demo user can read it, and removes the copy afterwards.
 - The sudo check runs `sudo -n -l` for the current user, so the audit must run as `rwdemo` (which `run_demo.sh` does).
-- Verified before use: `bash -n` syntax check and `--dry-run` of setup and cleanup. `verify_on_vm.sh --dry-run` also verified on Ubuntu WSL (2026-11-23). A real run on a Kali/Debian VM is still to be done.
+- Verified before use: `bash -n` syntax check and `--dry-run` of setup and cleanup. `verify_on_vm.sh --dry-run` also verified on Ubuntu WSL (2026-11-23). Real run on Kali Rolling (VirtualBox) on 2026-11-24: all seven planted findings reported as listed above, the `rw-report` chain shown, cleanup restored the system (`CLEANUP OK`).
