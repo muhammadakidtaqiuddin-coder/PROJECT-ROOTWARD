@@ -2,7 +2,7 @@
 
 **A read-only Linux privilege-escalation auditor.**
 
-RootWard inspects the local machine for misconfigurations that let an ordinary user become root: SUID/SGID binaries, risky `sudo` rules, writable cron jobs, dangerous file capabilities and writable directories in `PATH`. It scores each finding, links findings from different checks into attack chains, and explains how to fix every one. It never exploits anything, never changes the system and never sends data anywhere.
+RootWard inspects the local machine for misconfigurations that let an ordinary user become root: SUID/SGID binaries, risky `sudo` rules, writable cron jobs, dangerous file capabilities and writable directories in `PATH`. It scores each finding, links findings from different checks into attack chains, and explains how to fix every one. It never exploits anything, never changes the audited system (apart from writing its own report file in `output/`) and never sends data anywhere.
 
 > **For authorized testing only.** Run it on systems you own or have written permission to assess. See the [Legal Disclaimer](#legal-disclaimer) and the [Rules of Engagement](#rules-of-engagement-roe).
 
@@ -96,7 +96,7 @@ Severity only ever goes up, and each escalation stores its reason, shown as "Ris
 
 ## Installation
 
-RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions. Windows is not supported for scanning, and the tests for the checks need a Linux system (see [Testing](#testing)).
+RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions and its test suite has been run on Ubuntu 26.04 under WSL. Windows is not supported for scanning, and the tests for the checks need a Linux system (see [Testing](#testing)).
 
 ```bash
 git clone https://github.com/muhammadakidtaqiuddin-coder/PROJECT-ROOTWARD.git
@@ -120,7 +120,7 @@ python -m rootward --list-checks
 # See which checks would run, without touching the system
 python -m rootward --dry-run
 
-# Run every check against this machine
+# Run every check against this machine (asks you to type I AUTHORIZE first)
 python -m rootward
 
 # Run only some checks
@@ -136,7 +136,11 @@ python -m rootward --checks suid,cron
 | `--output DIR` | Folder for the local JSON report (default: `output/`) |
 | `--no-report` | Show terminal results without writing a JSON report |
 
-**Run it as the account you want to audit.** `sudo_rules` asks `sudo -n -l` for the *current user's* rights (it never prompts for a password), and the filesystem checks report what an ordinary user could abuse. Running as root still gives the same answer, because writability is judged from permission bits and not from who runs the scan.
+A real scan stops at a prompt and only continues if you type `I AUTHORIZE` exactly. `--dry-run` and `--list-checks` do not ask, because they inspect nothing.
+
+**Run it as the account you want to audit.** `sudo_rules` asks `sudo -n -l` for the *current user's* rights (it never prompts for a password), and the filesystem checks report what an ordinary user could abuse. The filesystem checks give the same answer whether you run as root or not, because writability is judged from permission bits and not from who runs the scan. `sudo_rules` is the exception: as root, `sudo -n -l` lists every right, so it reports differently from a normal account.
+
+The findings table needs a terminal at least 100 columns wide. On a narrower terminal RootWard prints each finding as a short block instead, so the output stays readable. Use 120 columns or more when recording a demo.
 
 **Exit codes**
 
@@ -144,25 +148,30 @@ python -m rootward --checks suid,cron
 |---|---|
 | 0 | Scan completed |
 | 1 | Scan completed but at least one check reported an error |
-| 2 | Scope rejected (not a loopback address) or bad arguments |
+| 2 | Scope rejected (not a loopback address), bad arguments, or the `I AUTHORIZE` confirmation was not given |
 | 130 | Stopped by the kill switch (partial results are still shown) |
 
 **Example output** (abridged)
 
 ```
-Checks completed: 5; findings: 3
+Checks completed: 5; findings: 2
 Risk: CRITICAL (score 100/100)
 
-[CRITICAL] Writable cron script run as root: /opt/backup.sh (cron)
-  Path: /opt/backup.sh
-  Finding: /opt/backup.sh is executed by cron as root but can be modified by an unprivileged user.
-  Remediation: Make cron files and scripts owned by root with mode 644/755, ...
-  Risk correlation: Root cron job runs a script that unprivileged users can modify
+[CRITICAL] Writable PATH directory: /opt/rootward-demo/bin (path_perms)
+  ...
+
+[CRITICAL] SUID binary: /opt/rootward-demo/bin/rw-report (suid)
+  Path: /opt/rootward-demo/bin/rw-report
+  Finding: /opt/rootward-demo/bin/rw-report runs with the privileges of its owner/group because it is not a standard SUID/SGID program. Evidence: -rwsr-xr-x uid=0 gid=0.
+  Remediation: If it is not required: chmod u-s,g-s /opt/rootward-demo/bin/rw-report. Confirm it belongs to an installed package (dpkg -S / rpm -qf) and remove it if it does not.
+  Risk correlation: Chain: path can be modified by unprivileged users (path_perms: /opt/rootward-demo/bin)
 ```
+
+On its own the SUID finding is only MEDIUM (a non-standard SUID program). Because the directory that holds it is writable by anyone, the scoring engine raises it to CRITICAL and records why in the "Risk correlation" line.
 
 ### JSON report
 
-After a scan, RootWard saves a report to a local directory (default `output/`) named `rootward-<hostname>-<YYYYmmdd-HHMMSS>.json`. Use `--output DIR` to choose another folder or `--no-report` to disable JSON output. A dry run never creates a report. The report holds the tool version, timestamp, hostname, scope, checks run and skipped, errors, whether the scan was aborted, the summary and every finding. The file is created owner-only (mode 0600), is never overwritten, and `output/` is excluded by `.gitignore`.
+After a scan, RootWard saves a report to a local directory (default `output/`) named `rootward-<hostname>-<YYYYmmdd-HHMMSS>.json`. Use `--output DIR` to choose another folder or `--no-report` to disable JSON output. A dry run inspects nothing, so it never creates a report. The report holds the tool version, timestamp, hostname, scope, checks run and skipped, errors, whether the scan was aborted, the summary and every finding. The file is created owner-only (mode 0600), is never overwritten, and `output/` is excluded by `.gitignore`. This report is the only thing RootWard writes. If it cannot be written (for example the folder is not writable), RootWard still shows the scan results, then prints `could not save report: ...` and exits with code 1.
 
 ## Ethical considerations
 
@@ -172,7 +181,7 @@ RootWard is built so that running it by accident cannot cause harm.
 |---|---|---|
 | Legal banner and authorization prompt | The CLI displays a notice citing the Computer Crimes Act 1997 and requires the user to type `I AUTHORIZE` before a real scan | Users are reminded that unauthorized access is an offence and must affirm permission |
 | Safe default scope | Defaults to `127.0.0.1`; any non-loopback scope is rejected with exit code 2 | The tool audits only the machine it runs on and cannot be pointed at someone else's host |
-| Read-only | Reads file metadata, extended attributes, cron files and `sudo -n -l`; never writes, deletes or exploits | An audit tool must not change the system it audits |
+| Read-only | Reads file metadata, extended attributes, cron files and `sudo -n -l`; never writes, deletes or exploits anything, except its own report file in `output/` | An audit tool must not change the system it audits |
 | Dry run | `--dry-run` lists the checks without running them | Users can review what will happen first |
 | Kill switch | `Ctrl+C` (SIGINT) or SIGTERM stops at the next safe point and returns partial results (exit 130) | A clean abort at any time |
 | No network, no exfiltration | The tool opens no network connection and sends nothing out | Findings describe a machine's weaknesses and must stay on it |
@@ -204,7 +213,7 @@ These rules apply to anyone who runs RootWard.
 **Emergency stop**
 - Press `Ctrl+C` to stop at the next safe point. Remaining checks are skipped and partial results are kept.
 - Send `SIGTERM` (`kill <pid>`) for the same clean stop from another terminal.
-- RootWard changes nothing on the system, so there is nothing to roll back after a stop. If a stop is needed because of an unexpected effect, tell the system owner at once.
+- RootWard changes nothing on the audited system, except its own report file in `output/`, so there is nothing to roll back after a stop (delete that file if you do not want it). If a stop is needed because of an unexpected effect, tell the system owner at once.
 
 ## Responsible disclosure
 

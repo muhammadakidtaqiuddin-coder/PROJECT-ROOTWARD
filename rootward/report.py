@@ -29,6 +29,7 @@ except ImportError:  # rich is optional at runtime: fall back to plain text
 TOOL_NAME = "RootWard"
 TOOL_VERSION = "1.0.0"
 DEFAULT_OUTPUT_DIR = "output"
+WIDE_LAYOUT_MIN_WIDTH = 100  # terminal columns needed for the findings table
 
 # One colour per severity (rich style names).
 SEVERITY_STYLES = {
@@ -111,8 +112,27 @@ def _findings_table(findings) -> "Table":
     return table
 
 
+def _print_findings_list(console, findings) -> None:
+    """One block per finding, for terminals too narrow for the table. The table repeats the
+    path in two columns, so at 80 columns three findings took 125 lines."""
+    for finding in findings:
+        console.print()
+        console.print(Text.assemble(
+            (f"[{finding.severity.name}]", SEVERITY_STYLES[finding.severity]),
+            f" {finding.title} ({finding.check_id})"))
+        console.print(Text(f"  Path: {finding.path}"))
+        console.print(Text(f"  Finding: {finding.explanation}"))
+        console.print(Text(f"  Remediation: {finding.remediation}"))
+        if finding.escalation_note:
+            console.print(Text(f"  Risk correlation: {finding.escalation_note}", style="bold"))
+
+
 def print_report(result, findings, summary, console=None) -> None:
-    """Print the scan to the terminal: a table sorted as given (worst first), then the summary.
+    """Print the scan to the terminal, worst finding first, then the summary.
+
+    On a terminal at least WIDE_LAYOUT_MIN_WIDTH columns wide the findings are shown as a
+    table; on a narrower one they are shown as a list of blocks, which stays readable
+    (record demos at 120 columns or more).
 
     `findings` should be the list returned by scoring.apply_scoring and `summary` the dict
     from scoring.summarize. Pass `console` to capture the output (used by the tests).
@@ -137,7 +157,10 @@ def print_report(result, findings, summary, console=None) -> None:
         counts.append(f"{name} {count}  ", style=SEVERITY_STYLES[Severity[name]])
     console.print(counts)
     if findings:
-        console.print(_findings_table(findings))
+        if console.width >= WIDE_LAYOUT_MIN_WIDTH:
+            console.print(_findings_table(findings))
+        else:
+            _print_findings_list(console, findings)
     for line in _status_lines(result):
         console.print(Text(line))
 
@@ -175,12 +198,20 @@ def _open_new_file(directory: Path, stem: str):
 
 
 def write_json_report(result, findings, summary, scope,
-                      out_dir=DEFAULT_OUTPUT_DIR, now: datetime | None = None) -> Path:
+                      out_dir=DEFAULT_OUTPUT_DIR, now: datetime | None = None) -> Path | None:
     """Save the scan as JSON in `out_dir` and return the file path.
 
     The file is named rootward-<hostname>-<YYYYmmdd-HHMMSS>.json. Partial results from a
     scan stopped by the kill switch are saved too, with "aborted": true.
+
+    A dry run inspects nothing, so no file is written and the result is None.
+
+    Raises OSError when the report cannot be written: PermissionError if `out_dir` is not
+    writable, FileExistsError or NotADirectoryError if `out_dir` exists but is a file. The
+    caller (cli.py) should catch OSError and report it without hiding the scan results.
     """
+    if result.dry_run:
+        return None
     generated_at = now or datetime.now().astimezone()
     directory = Path(out_dir)
     directory.mkdir(parents=True, exist_ok=True)
