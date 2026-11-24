@@ -3,7 +3,8 @@
 Two kinds of escalation:
   1. Tag rules  - one finding carries a dangerous combination of tags.
   2. Path chains - a path that unprivileged users can write is also
-     executed with elevated privileges (SUID, root cron, sudo NOPASSWD).
+     executed with elevated privileges (SUID, root cron, sudo NOPASSWD,
+     a binary holding a dangerous file capability).
      This correlates findings from DIFFERENT checks, which no single
      check can see on its own.
 
