@@ -5,7 +5,7 @@
 #   and removes them again at the end, even if something fails (cleanup runs from a trap).
 #
 # What it does, and saves to demo-verify-<host>-<time>.log next to this script:
-#   1. environment: OS, Python, and /usr/local/bin ownership (Akid's "staff" question)
+#   1. environment: OS, Python, and /usr/local/bin ownership (the Debian/Kali "staff" case)
 #   2. the REAL path_perms check on this machine's actual PATH directories
 #   3. a snapshot of the system before, setup_misconfig.sh, proof that the misconfigurations exist
 #   4. run_demo.sh: the audit as the demo user (the output to screenshot)
@@ -32,7 +32,10 @@ snapshot() { # print the parts of the system the demo touches, in a stable form
   echo "-- /opt/rootward-demo: $(ls -d /opt/rootward-demo 2>/dev/null || echo none)"
   echo "-- /etc/cron.d: $(ls /etc/cron.d 2>/dev/null | tr '\n' ' ')"
   echo "-- /etc/sudoers.d: $(ls /etc/sudoers.d 2>/dev/null | tr '\n' ' ')"
-  echo "-- /var/log/rootward-demo.log: $(ls /var/log/rootward-demo.log 2>/dev/null || echo none)"
+  echo "-- accounts: $(getent passwd | wc -l) users, $(getent group | wc -l) groups"
+  echo "-- passwd/group checksum: $(cat /etc/passwd /etc/group | sha256sum | cut -c1-16)"
+  echo "-- SUID files under /opt /usr/local /home /tmp: $(find /opt /usr/local /home /tmp -xdev -perm -4000 -type f 2>/dev/null | sort | tr '\n' ' ')"
+  echo "-- PATH dirs: $(stat -c '%n %a %U:%G' /usr/local/bin /usr/local/sbin 2>/dev/null | tr '\n' ';')"
 }
 
 cleanup_on_exit() {
@@ -56,7 +59,7 @@ run getent group staff
 run bash -c 'id; command -v sudo setcap visudo'
 run git -C "$REPO" log -1 --format='repo HEAD: %h %s'
 
-hr "2. The real path_perms check on this machine (Akid's review point B: the Debian/Kali 'staff' case)"
+hr "2. The real path_perms check on this machine (the Debian/Kali 'staff' case)"
 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$REPO" PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
   python3 - <<'PY' 2>&1 | tee -a "$LOG"
 from rootward.checks.path_perms import PathPermsCheck
@@ -64,8 +67,8 @@ found = PathPermsCheck().run()
 print(f"findings for the standard system PATH: {len(found)}")
 for f in found:
     print(f"  [{f.severity.name}] {f.title} | tags={sorted(f.tags)}")
-print("expected on stock Debian/Kali (/usr/local/bin is root:staff 2775): one MEDIUM finding with tags=[]")
-print("expected on Ubuntu (/usr/local/bin is root:root 755): no finding")
+print("expected on stock Debian/Kali (/usr/local/bin and /usr/local/sbin are both root:staff 2775): TWO MEDIUM findings (one per directory), each with tags=[]")
+print("expected on Ubuntu (root:root 755): no finding")
 PY
 
 if ((DRY)); then
@@ -91,6 +94,8 @@ run sudo -l -U rwdemo
 hr "4. The audit as the demo user: SCREENSHOT THIS (terminal at 120+ columns)"
 sudo "$HERE/run_demo.sh" 2>&1 | tee -a "$LOG"
 say ""
+say "On Debian/Kali one extra MEDIUM line ('System PATH directory writable by group staff', /usr/local/bin) is normal."
+say "For the screenshot run the real tool by hand:  sudo ./run_demo.sh --cli   (type I AUTHORIZE yourself)."
 say "Expected (see README.md in this folder): CRITICAL for find, cron backup.sh, sudo vim and rsync *, python3-cap and the PATH directory;"
 say "rw-report is MEDIUM alone but CRITICAL with a 'Risk correlation: Chain' line; env_keep LD_PRELOAD is HIGH."
 
@@ -98,7 +103,7 @@ hr "5. Cleanup, snapshot AFTER, compare"
 sudo "$HERE/cleanup_misconfig.sh" 2>&1 | tee -a "$LOG"
 snapshot | tee -a "$LOG" > "$HERE/.after.snapshot"
 if diff -q "$HERE/.before.snapshot" "$HERE/.after.snapshot" >/dev/null; then
-  say "CLEANUP OK: the system matches the snapshot taken before setup."
+  say "CLEANUP OK: users, groups, SUID files, cron.d, sudoers.d and the PATH directories match the snapshot taken before setup (it does not compare everything on the system)."
 else
   say "CLEANUP DIFFERS from the snapshot before setup:"; diff "$HERE/.before.snapshot" "$HERE/.after.snapshot" | tee -a "$LOG"
 fi

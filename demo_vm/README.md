@@ -3,13 +3,21 @@
 Scripts that deliberately misconfigure a **disposable Linux test VM** so RootWard has something to find during the live PoC. Everything is reversible and limited to fixed paths.
 
 > **TEST VM ONLY.** Never run these on a real, shared or production machine. Only audit systems you own or are authorised to test (Computer Crimes Act 1997).
+>
+> The setup makes the machine rootable by any local user on purpose (SUID `find`, a world-writable root cron script). `setup_misconfig.sh` therefore refuses to run unless `systemd-detect-virt` reports a VM, container or WSL (override: `--allow-bare-metal`, almost never wanted).
+
+## Lab safety
+1. Take a VM snapshot before the first run, so you can roll back whatever happens.
+2. Use NAT or host-only networking while the demo files exist.
+3. Run `sudo ./cleanup_misconfig.sh` straight after the demo (`verify_on_vm.sh` does it for you).
+4. Prerequisites: `sudo apt install python3 vim rsync libcap2-bin sudo` (`visudo` comes with `sudo`; without `setcap` only the capability step is skipped).
 
 ## Files
 | File | Purpose |
 |------|---------|
 | `setup_misconfig.sh` | Plants the misconfigurations (`--dry-run` previews, `--yes-test-vm` skips the confirmation prompt) |
-| `run_demo.sh` | Runs the five checks + scanner + scoring as the demo user `rwdemo`, read-only |
-| `cleanup_misconfig.sh` | Removes everything (user, directory, cron file, sudoers file) |
+| `run_demo.sh` | Runs the five checks + scanner + scoring as the demo user `rwdemo`, read-only; `--cli` runs the real tool instead |
+| `cleanup_misconfig.sh` | Removes everything (user, directory, cron file, sudoers file); exits non-zero if the user is still there |
 
 ## One-command check on a test VM
 `verify_on_vm.sh` runs every step, saves a log (`demo-verify-<host>-<time>.log`, ignored by git) and checks that the cleanup restored the system. Clone the repository on the VM first.
@@ -18,7 +26,7 @@ cd demo_vm && chmod +x *.sh
 ./verify_on_vm.sh --dry-run    # safe: prints the environment and runs the real path_perms check, changes nothing
 ./verify_on_vm.sh              # real run: asks for sudo, then you type TEST VM
 ```
-The dry run answers one question for Debian and Kali: `/usr/local/bin` is `root:staff 2775` there, so `path_perms` should report one MEDIUM finding with no tags; on Ubuntu (`root:root 755`) it reports nothing. For screenshots use a terminal at least 120 columns wide.
+The dry run answers one question for Debian and Kali: `/usr/local/bin` and `/usr/local/sbin` are both `root:staff 2775` there, so `path_perms` should report two MEDIUM findings (one per directory) with no tags; on Ubuntu (`root:root 755`) it reports nothing. For screenshots use a terminal at least 120 columns wide.
 
 ## Order
 ```bash
@@ -29,7 +37,7 @@ sudo ./setup_misconfig.sh          # type: TEST VM
 sudo ./run_demo.sh                 # the audit
 sudo ./cleanup_misconfig.sh        # undo
 ```
-Needs `python3`, `visudo` (sudo package) and `setcap` (`apt install libcap2-bin`) for the capability step; a missing `setcap` only skips that step.
+Optional, for the screenshot: `sudo ./run_demo.sh --cli` runs the real tool as `rwdemo` (banner, authorization prompt, coloured table, `--no-report` so nothing is written). Type `I AUTHORIZE` yourself.
 
 ## What is planted and what RootWard should report
 | Plant | Check | Expected |
@@ -41,6 +49,7 @@ Needs `python3`, `visudo` (sudo package) and `setcap` (`apt install libcap2-bin`
 | `Defaults:rwdemo env_keep+=LD_PRELOAD` | `sudo_rules` | HIGH, tag `sudo-env-keep` |
 | `/opt/rootward-demo/python3-cap` with `cap_setuid+ep` | `capabilities` | CRITICAL |
 | `PATH` starts with the world-writable `/opt/rootward-demo/bin` (set by `run_demo.sh`) | `path_perms` | CRITICAL (writable, before the system directories) |
+| *(not planted)* `run_demo.sh` also puts `/usr/local/bin` in `PATH`; on Debian/Kali it is `root:staff 2775` | `path_perms` | one extra MEDIUM "System PATH directory writable by group staff"; normal on Debian/Kali, absent on Ubuntu |
 
 The cron job only appends a timestamp to `/opt/rootward-demo/backup.log`; nothing here exploits anything.
 

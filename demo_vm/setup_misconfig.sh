@@ -5,7 +5,10 @@
 #   It creates a user, a world-writable directory, a SUID copy of a binary, a cron job,
 #   a sudoers.d rule and a file capability. Undo everything with cleanup_misconfig.sh.
 #
-# Usage:  sudo ./setup_misconfig.sh [--dry-run] [--yes-test-vm]
+# Refuses to run on bare metal (systemd-detect-virt must report a VM, container or WSL);
+# --allow-bare-metal overrides that and is almost never what you want.
+#
+# Usage:  sudo ./setup_misconfig.sh [--dry-run] [--yes-test-vm] [--allow-bare-metal]
 set -euo pipefail
 
 DEMO_USER="rwdemo"
@@ -14,9 +17,10 @@ CRON_FILE="/etc/cron.d/rootward-demo"
 SUDOERS_FILE="/etc/sudoers.d/rootward-demo"
 DRY=0
 YES=0
+BARE=0
 
 usage() {
-  sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
 }
 
@@ -24,6 +28,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY=1 ;;
     --yes-test-vm) YES=1 ;;
+    --allow-bare-metal) BARE=1 ;;
     -h | --help) usage 0 ;;
     *) echo "Unknown option: $arg" >&2; usage 1 ;;
   esac
@@ -48,6 +53,21 @@ put() { # put <path> <mode> <content>: write a file with a given mode
 if ((!DRY)) && [[ "$EUID" -ne 0 ]]; then
   say "Run as root (sudo) on the test VM, or use --dry-run to preview."; exit 1
 fi
+# The real run makes this machine rootable by any local user, so refuse on bare metal.
+if ((!DRY)) && ((!BARE)); then
+  if ! command -v systemd-detect-virt >/dev/null 2>&1; then
+    say "systemd-detect-virt not found, so I cannot tell whether this is a VM. Refusing."
+    say "If you are certain this is a disposable VM, add --allow-bare-metal."; exit 1
+  fi
+  if ! virt="$(systemd-detect-virt)"; then
+    say "This looks like a physical machine (systemd-detect-virt: ${virt:-none}). Refusing."
+    say "Run this inside a VM. To override at your own risk: --allow-bare-metal."; exit 1
+  fi
+  say "Virtualisation detected: $virt"
+fi
+for tool in /usr/bin/vim /usr/bin/rsync; do
+  [[ -x "$tool" ]] || say "Note: $tool is not installed (apt install vim rsync); the sudoers rule will name a missing program."
+done
 if [[ -e "$DEMO_DIR" || -e "$CRON_FILE" || -e "$SUDOERS_FILE" ]] && ((!DRY)); then
   say "Demo files already exist. Run cleanup_misconfig.sh first."; exit 1
 fi

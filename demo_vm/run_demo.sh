@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
-# RootWard demo: runs the real checks + Akid's scanner and scoring AS THE DEMO USER (rwdemo),
+# RootWard demo: runs the real checks, scanner and scoring AS THE DEMO USER (rwdemo),
 # read-only, against the machine prepared by setup_misconfig.sh.
 #
 # Uses the repo's own code (this folder sits at the repository root).
 #
-# Usage:  sudo ./run_demo.sh
+# Usage:  sudo ./run_demo.sh          short list of findings (works anywhere, good for logs)
+#         sudo ./run_demo.sh --cli    the real tool: banner, authorization prompt (type I AUTHORIZE
+#                                     yourself), coloured table; nothing is written (--no-report)
 set -euo pipefail
 
 DEMO_USER="rwdemo"
@@ -41,7 +43,15 @@ PY
 chmod a+r "$T/demo_scan.py"
 
 echo "== read-only audit as $DEMO_USER (PATH includes the writable demo bin first) =="
+echo "(On Debian/Kali this PATH also contains /usr/local/bin, which is root:staff 2775: expect one extra MEDIUM 'System PATH directory writable by group staff' finding.)"
 cd "$T"   # a directory the demo user can read (the caller's cwd may not be)
+if [[ "${1:-}" == "--cli" ]]; then
+  runuser -u "$DEMO_USER" -- env \
+    PATH="$DEMO_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
+    PYTHONPATH="$T" PYTHONDONTWRITEBYTECODE=1 \
+    python3 -m rootward --no-report
+  exit $?
+fi
 runuser -u "$DEMO_USER" -- env \
   PATH="$DEMO_DIR/bin:/usr/local/bin:/usr/bin:/bin" \
   PYTHONPATH="$T" PYTHONDONTWRITEBYTECODE=1 \

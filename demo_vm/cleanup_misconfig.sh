@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # RootWard demo: removes everything setup_misconfig.sh created. Touches only these fixed paths:
 #   user rwdemo (and its home), /opt/rootward-demo, /etc/cron.d/rootward-demo,
-#   /etc/sudoers.d/rootward-demo, /var/log/rootward-demo.log
+#   /etc/sudoers.d/rootward-demo
 #
 # Usage:  sudo ./cleanup_misconfig.sh [--dry-run]
 set -euo pipefail
@@ -36,14 +36,19 @@ echo "== RootWard demo cleanup =="
 # demo user: stop its processes, then delete the account and its home
 if id "$DEMO_USER" >/dev/null 2>&1; then
   act pkill -u "$DEMO_USER" || true
-  act userdel -r "$DEMO_USER" || true
+  act userdel -r "$DEMO_USER" || echo "userdel reported a problem for $DEMO_USER" >&2
 fi
 
 # demo directory: fixed literal path only, never a variable that could be empty or changed
 if [[ -d "/opt/rootward-demo" ]]; then
   act rm -rf -- "/opt/rootward-demo"
 fi
-[[ -e /var/log/rootward-demo.log ]] && act rm -f -- /var/log/rootward-demo.log
+
+# do not report success if the account is still there
+if ((!DRY)) && id "$DEMO_USER" >/dev/null 2>&1; then
+  echo "ERROR: user $DEMO_USER still exists (is a process of that user still running?). Remove it by hand: sudo userdel -r $DEMO_USER" >&2
+  exit 1
+fi
 
 echo "Done. Verify:"
 echo "  id $DEMO_USER                  (should say: no such user)"
