@@ -99,7 +99,7 @@ class PathChainTests(unittest.TestCase):
 
     def test_without_a_privileged_tag_nothing_chains(self):
         directory = make("/opt/bin", {"path-writable"}, Severity.HIGH)
-        plain = make("/opt/bin/tool", {"capability"}, Severity.MEDIUM)
+        plain = make("/opt/bin/tool", {"sgid"}, Severity.MEDIUM)
         apply_scoring([directory, plain])
         self.assertEqual(directory.severity, Severity.HIGH)
         self.assertEqual(plain.severity, Severity.MEDIUM)
