@@ -160,13 +160,20 @@ class CronCheck(BaseCheck):
         if not os.path.isdir(directory):
             return []
         findings = []
-        for name in sorted(os.listdir(directory)):
+        try:
+            names = sorted(os.listdir(directory))
+        except OSError:  # unreadable directory: skip it, the other cron sources still run
+            return []
+        for name in names:
             if self.aborted():
                 break
             path = os.path.join(directory, name)
             # run-parts only runs executable files with plain names; others are not executed
-            if (not _RUN_PARTS_NAME_RE.match(name) or not os.path.isfile(path)
-                    or not os.stat(path).st_mode & 0o111):
+            try:
+                if (not _RUN_PARTS_NAME_RE.match(name) or not os.path.isfile(path)
+                        or not os.stat(path).st_mode & 0o111):
+                    continue
+            except OSError:  # file removed or unreadable between listing and stat
                 continue
             tags = writable_tags(path)
             if not tags and can_replace(path):
