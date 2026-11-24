@@ -49,7 +49,9 @@ Beyond the individual checks:
 - **False-positive control.** Standard distribution SUID programs are not reported, and a user editing their own crontab is not an escalation. The Debian default `root:staff 2775` on `/usr/local/bin` is reported as MEDIUM only and never chained to CRITICAL.
 - **Add a check by adding a file.** Every module in `rootward/checks/` that subclasses `BaseCheck` is discovered automatically.
 
-<!-- TODO (Haziq/Faris): add a terminal screenshot of a real scan on the demo VM here, e.g. docs/scan-example.png -->
+![RootWard scanning the demo VM: banner, authorization prompt and a table of findings; the SUID rw-report finding shows the path chain](docs/scan-example.png)
+
+*A scan of the demo VM (Kali Rolling) after `demo_vm/setup_misconfig.sh`: the planted misconfigurations are reported as CRITICAL, and the `rw-report` finding carries the "Risk correlation: Chain" line. The table continues with Kali's own SUID programs at MEDIUM.*
 
 ## Attack lifecycle mapping
 
