@@ -13,18 +13,19 @@ from rootward.ethics import (
     reset_abort,
     validate_scope,
 )
+from rootward.report import DEFAULT_OUTPUT_DIR, print_report, write_json_report
 from rootward.scanner import discover_checks, run_scan
 from rootward.scoring import apply_scoring, summarize
 
 
 BANNER = r"""
- ____ גם ____
-|  _ \ ___  _ __ | |___      ____ _ _ __ __| |
-| |_) / _ \| '_ \| __\ \ /\ / / _` | '__/ _` |
-|  _ < (_) | |_) | |_ \ V  V / (_| | | | (_| |
-|_| \_\___/| .__/ \__| \_/\_/ \__,_|_|  \__,_|
-           |_|
-""".replace("גם", "")
+ _____             _   __          __
+|  __ \           | |  \ \        / /
+| |__) |___   ___ | |_  \ \  /\  / /
+|  _  // _ \ / _ \| __|  \ \/  \/ /
+| | \ \ (_) | (_) | |_    \  /\  /
+|_|  \_\___/ \___/ \__|    \/  \/
+"""
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -52,35 +53,34 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="list available checks and exit",
     )
+    parser.add_argument(
+        "--output",
+        default=DEFAULT_OUTPUT_DIR,
+        metavar="DIR",
+        help=f"folder for the local JSON report (default: {DEFAULT_OUTPUT_DIR}/)",
+    )
+    parser.add_argument(
+        "--no-report",
+        action="store_true",
+        help="do not write a JSON report file",
+    )
     return parser
 
 
-def _print_result(result) -> None:
-    if result.dry_run:
-        print("Dry run: no system checks were performed.")
-        print("Planned checks: " + (", ".join(result.checks_planned) or "none"))
-        return
-
-    findings = apply_scoring(result.findings)
-    summary = summarize(findings)
-    print(f"Checks completed: {len(result.checks_run)}; findings: {summary['total']}")
-    print(f"Risk: {summary['overall_rating']} (score {summary['risk_score']}/100)")
-    for finding in findings:
-        print(f"\n[{finding.severity.name}] {finding.title} ({finding.check_id})")
-        print(f"  Path: {finding.path}")
-        print(f"  Finding: {finding.explanation}")
-        print(f"  Remediation: {finding.remediation}")
-        if finding.escalation_note:
-            print(f"  Risk correlation: {finding.escalation_note}")
-
-    if result.errors:
-        print("\nCheck issues:")
-        for check_id, message in sorted(result.errors.items()):
-            print(f"  {check_id}: {message}")
-    if result.aborted:
-        print("\nScan stopped by the kill switch; remaining checks were skipped.")
-    else:
-        print(f"\nScan finished in {result.duration:.2f}s.")
+def _confirm_authorization() -> bool:
+    """Require an explicit authorization acknowledgement before a real scan."""
+    try:
+        answer = input(
+            'Confirm you own this system or have permission to assess it. '
+            'Type "I AUTHORIZE" to continue: '
+        )
+    except (EOFError, KeyboardInterrupt):
+        print("Authorization not confirmed; scan cancelled.", file=sys.stderr)
+        return False
+    if answer.strip() != "I AUTHORIZE":
+        print("Authorization not confirmed; scan cancelled.", file=sys.stderr)
+        return False
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -107,6 +107,9 @@ def main(argv: list[str] | None = None) -> int:
             print("No check IDs were provided.", file=sys.stderr)
             return 2
 
+    if not args.dry_run and not _confirm_authorization():
+        return 2
+
     print(f"Authorized scope: {scope} (local system checks only)")
     print("Kill switch: press Ctrl+C to stop after the current safe point.\n")
 
@@ -129,7 +132,26 @@ def main(argv: list[str] | None = None) -> int:
         for sig, handler in previous_handlers.items():
             signal.signal(sig, handler)
 
-    _print_result(result)
+    # Dry runs are intentionally report-free: they do not inspect the host or
+    # create an output directory or file.
+    if result.dry_run:
+        print_report(result, [], summarize([]))
+        return 1 if result.errors else 0
+
+    findings = apply_scoring(result.findings)
+    summary = summarize(findings)
+    print_report(result, findings, summary)
+
+    if not args.no_report:
+        try:
+            report_path = write_json_report(
+                result, findings, summary, scope, out_dir=args.output
+            )
+        except OSError as exc:
+            print(f"could not save report: {exc}", file=sys.stderr)
+            return 1
+        print(f"JSON report saved to {report_path}")
+
     return 130 if result.aborted else (1 if result.errors else 0)
 
 
