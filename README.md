@@ -75,7 +75,6 @@ MITRE ATT&CK mapping (tactic **TA0004 Privilege Escalation**):
 | `capabilities` | T1548 Abuse Elevation Control Mechanism (file capabilities have no dedicated sub-technique) |
 | `path_perms` | T1574.007 Hijack Execution Flow: Path Interception by PATH Environment Variable |
 
-<!-- TODO (Faris): verify these IDs on https://attack.mitre.org before the v1.0.0 release -->
 
 ## How it works
 
@@ -98,7 +97,7 @@ Severity only ever goes up, and each escalation stores its reason, shown as "Ris
 
 ## Installation
 
-RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions and its test suite has been run on Ubuntu under WSL; Windows is not supported for scanning.
+RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions. Windows is not supported for scanning, and the tests for the checks need a Linux system (see [Testing](#testing)).
 
 ```bash
 git clone https://github.com/muhammadakidtaqiuddin-coder/PROJECT-ROOTWARD.git
