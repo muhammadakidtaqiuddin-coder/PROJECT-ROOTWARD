@@ -98,7 +98,7 @@ Severity only ever goes up, and each escalation stores its reason, shown as "Ris
 
 ## Installation
 
-RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions and its test suite has been run on Ubuntu 26.04 under WSL. Windows is not supported for scanning, and the tests for the checks need a Linux system (see [Testing](#testing)).
+RootWard audits **Linux**. Use a Linux machine or VM that you own. It follows Debian/Kali conventions and its test suite has been run on Kali GNU/Linux Rolling and on Ubuntu 26.04 under WSL. Windows is not supported for scanning, and the tests for the checks need a Linux system (see [Testing](#testing)).
 
 ```bash
 git clone https://github.com/muhammadakidtaqiuddin-coder/PROJECT-ROOTWARD.git
@@ -242,10 +242,13 @@ RootWard is a read-only local security auditor for systems you own or are author
 ## Testing
 
 ```bash
-python -m unittest tests.test_checks tests.test_checks_review tests.test_scoring tests.test_report
+python -m unittest tests.test_checks tests.test_checks_review tests.test_cli tests.test_scoring tests.test_report
 ```
 
+The full suite (147 tests) passes on Kali GNU/Linux Rolling with Python 3.14, run both as a normal user and as root. Run it as root with the virtual environment's interpreter (`sudo .venv/bin/python -m unittest ...`) so that `rich` is still found; without `rich` the 14 terminal-output tests are skipped.
+
 - `test_checks` and `test_checks_review` exercise the five checks and the permission logic. They need **Linux** (or WSL).
+- `test_cli` covers the command line: scope check, the `I AUTHORIZE` prompt, exit codes, dry run, `--no-report`, an unwritable report folder and the kill switch. The scan itself is stubbed.
 - `test_scoring` covers the tag rules, path chains, ordering, risk score and tag vocabulary.
 - `test_report` covers the JSON report (labelling, hostname sanitising, no overwrite) and the terminal output.
 
