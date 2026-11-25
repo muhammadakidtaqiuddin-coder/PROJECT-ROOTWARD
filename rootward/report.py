@@ -63,6 +63,8 @@ def _plain_report(result, findings, summary) -> str:
         f"Checks completed: {len(result.checks_run)}; findings: {summary['total']}",
         f"Risk: {summary['overall_rating']} (score {summary['risk_score']}/100)",
     ]
+    if _partial_note(result):
+        lines.append(_partial_note(result))
     for finding in findings:
         lines += [
             f"\n[{finding.severity.name}] {finding.title} ({finding.check_id})",
@@ -88,6 +90,16 @@ def _status_lines(result) -> list:
     else:
         lines.append(f"\nScan finished in {result.duration:.2f}s.")
     return lines
+
+
+def _partial_note(result) -> str:
+    """Warning for a scan the kill switch cut short. A rating built from fewer checks can look
+    safe (INFO, score 0) when most checks never ran. Empty for a complete scan."""
+    skipped = len(result.checks_skipped)
+    if not skipped:
+        return ""
+    return (f"PARTIAL SCAN: {skipped} check{'s' if skipped != 1 else ''} skipped, "
+            "so the real risk may be higher")
 
 
 def _findings_table(findings) -> "Table":
@@ -152,6 +164,8 @@ def print_report(result, findings, summary, console=None) -> None:
     console.print(Text.assemble(
         "Risk: ", (summary["overall_rating"], SEVERITY_STYLES[rating]),
         f" (score {summary['risk_score']}/100)"))
+    if _partial_note(result):
+        console.print(Text(_partial_note(result), style="bold yellow"))
     counts = Text("Counts: ")
     for name, count in summary["counts"].items():
         counts.append(f"{name} {count}  ", style=SEVERITY_STYLES[Severity[name]])

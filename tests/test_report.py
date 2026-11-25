@@ -197,6 +197,29 @@ class PrintReportTests(unittest.TestCase):
         self.assertIn("stopped by the kill switch", text)
         self.assertNotIn("Scan finished", text)
 
+    def test_partial_scan_is_labelled_so_a_low_rating_is_not_read_as_safe(self):
+        result = make_result(aborted=True, checks_run=["capabilities"],
+                             checks_skipped=["cron", "path_perms", "sudo_rules", "suid"])
+        findings, summary = scored([])
+        text = render(result, findings, summary)
+        self.assertIn("Risk: INFO", text)
+        self.assertIn("PARTIAL SCAN: 4 checks skipped", text)
+
+    def test_a_complete_scan_has_no_partial_label(self):
+        findings, summary = scored([])
+        self.assertNotIn("PARTIAL", render(make_result(), findings, summary))
+
+    def test_stopped_after_the_last_check_is_not_partial(self):
+        # the kill switch fired while the final check ran: nothing was skipped
+        result = make_result(aborted=True, checks_skipped=[])
+        findings, summary = scored([])
+        self.assertNotIn("PARTIAL", render(result, findings, summary))
+
+    def test_one_skipped_check_uses_the_singular(self):
+        result = make_result(aborted=True, checks_skipped=["suid"])
+        findings, summary = scored([])
+        self.assertIn("PARTIAL SCAN: 1 check skipped", render(result, findings, summary))
+
     def test_dry_run_lists_planned_checks_only(self):
         result = make_result(dry_run=True, checks_planned=["cron", "suid"])
         text = render(result, [], summarize([]))
@@ -224,6 +247,21 @@ class PlainFallbackTests(unittest.TestCase):
         result = make_result(dry_run=True, checks_planned=["cron"])
         text = self.run_plain(result, [], summarize([]))
         self.assertIn("Planned checks: cron", text)
+
+
+class PlainReportTests(unittest.TestCase):
+    """The fallback used when rich is not installed; runs with or without rich."""
+
+    def test_partial_scan_is_labelled(self):
+        result = make_result(aborted=True, checks_skipped=["cron", "suid"])
+        findings, summary = scored([])
+        text = report._plain_report(result, findings, summary)
+        self.assertIn("Risk: INFO (score 0/100)", text)
+        self.assertIn("PARTIAL SCAN: 2 checks skipped", text)
+
+    def test_complete_scan_has_no_partial_label(self):
+        findings, summary = scored([])
+        self.assertNotIn("PARTIAL", report._plain_report(make_result(), findings, summary))
 
 
 if __name__ == "__main__":
