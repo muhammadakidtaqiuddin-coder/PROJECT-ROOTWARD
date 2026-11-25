@@ -1,4 +1,4 @@
-# RootWard demo VM (Role B)
+# RootWard demo VM
 
 Scripts that deliberately misconfigure a **disposable Linux test VM** so RootWard has something to find during the live PoC. Everything is reversible and limited to fixed paths.
 
@@ -52,7 +52,7 @@ Optional, for the screenshot: `sudo ./run_demo.sh --cli` runs the real tool as `
 | *(not planted)* `run_demo.sh` also puts `/usr/local/bin` in `PATH`; on stock Debian it is `root:staff 2775` | `path_perms` | one extra MEDIUM "System PATH directory writable by group staff" on Debian only; absent on Kali and Ubuntu |
 | *(not planted)* the SUID programs the distribution already has | `suid` | MEDIUM each when they are not on the allowlist; on Kali Rolling with Kismet installed that is about 14 lines (`kismet_cap_*`, `rsh-redone-*`, `pppd`); they sort below the CRITICAL findings |
 
-The cron job only appends a timestamp to `/opt/rootward-demo/backup.log`; nothing here exploits anything.
+The cron job only appends a timestamp to `/opt/rootward-demo/backup.log`, and nothing here runs an exploit. But the planted weaknesses are real: until the cleanup runs, a local user on that machine can become root through the SUID `find`, the `python3-cap` binary with `cap_setuid`, or the root cron job that runs a world-writable script every 5 minutes. Use a disposable VM on a host-only or NAT network, and run the cleanup right after the screenshot.
 
 ## Notes
 - `run_demo.sh` copies the repository's `rootward/` package to a temporary directory so the demo user can read it, and removes the copy afterwards.
