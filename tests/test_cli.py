@@ -41,8 +41,12 @@ class CliTestCase(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         prompt = (mock.Mock(side_effect=answer) if isinstance(answer, BaseException)
                   else mock.Mock(return_value=answer))
+        # rich reads the width of the real terminal even when stdout is redirected. A wide
+        # terminal switches the report to the table layout, which does not print the finding
+        # title, so pin the width to keep the output the same on every machine.
         with mock.patch("rootward.cli.run_scan", return_value=result) as run_scan, \
                 mock.patch("builtins.input", prompt), \
+                mock.patch.dict(os.environ, {"COLUMNS": "80"}), \
                 contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
             if report_error is None:
                 code = cli.main(list(argv))
