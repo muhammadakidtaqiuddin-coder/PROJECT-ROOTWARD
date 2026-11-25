@@ -68,6 +68,10 @@ fi
 for tool in /usr/bin/vim /usr/bin/rsync; do
   [[ -x "$tool" ]] || say "Note: $tool is not installed (apt install vim rsync); the sudoers rule will name a missing program."
 done
+if ((!DRY)) && id "$DEMO_USER" >/dev/null 2>&1; then
+  say "User $DEMO_USER already exists. Not touching it: cleanup_misconfig.sh would delete it."
+  say "If it is left over from an earlier run, run cleanup_misconfig.sh first; otherwise remove or rename it by hand."; exit 1
+fi
 if [[ -e "$DEMO_DIR" || -e "$CRON_FILE" || -e "$SUDOERS_FILE" ]] && ((!DRY)); then
   say "Demo files already exist. Run cleanup_misconfig.sh first."; exit 1
 fi
@@ -80,10 +84,8 @@ fi
 say "== RootWard demo misconfiguration =="
 
 # 1. unprivileged demo user (password locked: use `runuser`/`sudo -u`, not a login)
-if ((DRY)) || ! id "$DEMO_USER" >/dev/null 2>&1; then
-  act useradd -m -s /bin/bash "$DEMO_USER"
-  act passwd -l "$DEMO_USER"
-fi
+act useradd -m -s /bin/bash "$DEMO_USER"
+act passwd -l "$DEMO_USER"
 
 # 2. demo directory: root-owned, plus a WORLD-WRITABLE bin directory (PATH hijack / chain)
 act mkdir -p "$DEMO_DIR/bin"

@@ -80,6 +80,10 @@ if ((DRY)); then
   trap - EXIT; exit 0
 fi
 
+if id rwdemo >/dev/null 2>&1; then
+  say "ERROR: user rwdemo already exists. Run ./cleanup_misconfig.sh first (it deletes that user), or remove it by hand if it is not from this demo."
+  trap - EXIT; exit 1
+fi
 hr "3. Snapshot BEFORE, then setup (type TEST VM when asked)"
 snapshot | tee -a "$LOG" > "$HERE/.before.snapshot"
 SETUP_STARTED=1

@@ -51,7 +51,7 @@ Beyond the individual checks:
 
 ![RootWard scanning the demo VM: banner, authorization prompt and a table of findings; the SUID rw-report finding shows the path chain](docs/scan-example.png)
 
-*A scan of the demo VM (Kali Rolling) after `demo_vm/setup_misconfig.sh`: the planted misconfigurations are reported as CRITICAL, and the `rw-report` finding carries the "Risk correlation: Chain" line. The table continues with Kali's own SUID programs at MEDIUM.*
+*A scan of the demo VM (Kali Rolling) after `demo_vm/setup_misconfig.sh`: the planted misconfigurations are reported as CRITICAL, and the `rw-report` finding carries the "Risk correlation: Chain" line. The image stops after the `vim` row. The full scan has 22 findings (7 CRITICAL, 1 HIGH, 14 MEDIUM); the 14 MEDIUM ones below it are Kali's own SUID programs (Kismet, `rsh-redone`, `pppd`) and are not shown.*
 
 ## Attack lifecycle mapping
 
