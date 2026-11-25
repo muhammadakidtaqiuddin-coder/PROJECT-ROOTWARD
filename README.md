@@ -242,12 +242,13 @@ RootWard is a read-only local security auditor for systems you own or are author
 ## Testing
 
 ```bash
-python -m unittest tests.test_checks tests.test_checks_review tests.test_scoring tests.test_report
+python -m unittest tests.test_checks tests.test_checks_review tests.test_cli tests.test_scoring tests.test_report
 ```
 
-The full suite (112 tests) passes on Kali GNU/Linux Rolling with Python 3.14, run both as a normal user and as root. Run it as root with the virtual environment's interpreter (`sudo .venv/bin/python -m unittest ...`) so that `rich` is still found; without `rich` the 10 terminal-output tests are skipped.
+The full suite (147 tests) passes on Kali GNU/Linux Rolling with Python 3.14, run both as a normal user and as root. Run it as root with the virtual environment's interpreter (`sudo .venv/bin/python -m unittest ...`) so that `rich` is still found; without `rich` the 14 terminal-output tests are skipped.
 
 - `test_checks` and `test_checks_review` exercise the five checks and the permission logic. They need **Linux** (or WSL).
+- `test_cli` covers the command line: scope check, the `I AUTHORIZE` prompt, exit codes, dry run, `--no-report`, an unwritable report folder and the kill switch. The scan itself is stubbed.
 - `test_scoring` covers the tag rules, path chains, ordering, risk score and tag vocabulary.
 - `test_report` covers the JSON report (labelling, hostname sanitising, no overwrite) and the terminal output.
 
