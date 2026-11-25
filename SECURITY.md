@@ -16,9 +16,7 @@ The maintainers of this repository (team **Sudo Squad**). Please report **privat
 
 ### How to report
 1. **Preferred:** use GitHub private vulnerability reporting. On the repository page open the **Security** tab and choose **Report a vulnerability**.
-2. **Alternative:** email the team at `muhammadakidtaqiuddin@gmail.com`. Do not put exploit details in a public place.
-
-<!-- TODO (repository owner, Akid): turn on Settings > Code security > Private vulnerability reporting, otherwise option 1 does not exist. Then fill in the team contact address above. -->
+2. **Alternative:** email the maintainer at `muhammadakidtaqiuddin@gmail.com`. Do not put exploit details in a public place.
 
 Please include:
 - what you found and which file or option is affected;
